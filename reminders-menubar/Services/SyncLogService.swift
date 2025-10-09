@@ -4,6 +4,10 @@ import os.log
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
+import FirebaseFirestore
+import FirebaseAuth
+#endif
 
 class SyncLogService {
     static let shared = SyncLogService()
@@ -15,12 +19,44 @@ class SyncLogService {
         case diagnostics
     }
 
+    private let logRetentionLimit = 2
+    private let pruneLock = NSLock()
+    private var hasPrunedLogsThisLaunch = false
+
+    private func pruneOldLogsIfNeeded(in directory: URL) {
+        pruneLock.lock()
+        defer { pruneLock.unlock() }
+        guard !hasPrunedLogsThisLaunch else { return }
+        hasPrunedLogsThisLaunch = true
+        let fm = FileManager.default
+        guard let urls = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        let logFiles = urls.filter { $0.pathExtension == "log" }
+        guard logFiles.count > logRetentionLimit else { return }
+        let sorted = logFiles.sorted { lhs, rhs in
+            let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                ?? (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate)
+                ?? Date.distantPast
+            let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                ?? (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate)
+                ?? Date.distantPast
+            return lhsDate > rhsDate
+        }
+        for url in sorted.dropFirst(logRetentionLimit) {
+            try? fm.removeItem(at: url)
+        }
+    }
+
     private func logFileURL() -> URL? {
         guard let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return nil }
         let logsDir = lib.appendingPathComponent("Logs").appendingPathComponent("RemindersMenuBar", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
         } catch { return nil }
+        pruneOldLogsIfNeeded(in: logsDir)
         return logsDir.appendingPathComponent("sync.log")
     }
 
@@ -94,6 +130,33 @@ class SyncLogService {
         } else {
             logEvent(tag: "sync", level: "ERROR", message: "Unable to encode sync detail: \(payload)")
         }
+
+        // Mirror detail event to Firestore activity stream when available
+        #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
+        Task { @MainActor in
+            guard let db = FirebaseManager.shared.db else { return }
+            var activity: [String: Any] = payload
+            activity["createdAt"] = FieldValue.serverTimestamp()
+            activity["source"] = "MacApp"
+            if let uid = Auth.auth().currentUser?.uid { activity["ownerUid"] = uid }
+            // Flatten simple metadata for convenience filters (e.g., title, status)
+            if let meta = payload["metadata"] as? [String: Any] {
+                if let title = meta["title"] { activity["title"] = title }
+                if let status = meta["status"] { activity["status"] = status }
+                if let calendar = meta["calendar"] { activity["calendar"] = calendar }
+                if let taskRef = meta["taskRef"] { activity["taskRef"] = taskRef }
+                if let storyRef = meta["storyRef"] { activity["storyRef"] = storyRef }
+                if let goalRef = meta["goalRef"] { activity["goalRef"] = goalRef }
+                if let tags = meta["tags"] { activity["tags"] = tags }
+            }
+            do {
+                try await db.collection("activity").addDocument(data: activity)
+            } catch {
+                // Also emit a local log so failures are visible in logs
+                logEvent(tag: "activity", level: "ERROR", message: "Failed to write activity: \(error.localizedDescription)")
+            }
+        }
+        #endif
     }
 
     #if canImport(AppKit)
