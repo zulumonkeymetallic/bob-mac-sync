@@ -264,20 +264,34 @@ actor FirebaseSyncService {
         if let listName = meta["list"], !listName.isEmpty { metadataLines.append("#list: \(listName)") }
 
         var lines: [String] = []
+        // Add deep links at the top when possible
+        if let taskRef = meta["taskRef"], !taskRef.isEmpty {
+            if let taskURL = taskDeepLink(for: taskRef) {
+                lines.append("Task: \(taskURL.absoluteString)")
+            }
+            if let activityURL = activityDeepLink(for: taskRef) {
+                lines.append("Activity: \(activityURL.absoluteString)")
+            }
+            lines.append("")
+        }
         if !userLines.isEmpty {
             lines.append(contentsOf: userLines)
             if let last = lines.last, !last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append("")
             }
-            lines.append("-------")
         }
-
+        lines.append("-------")
         lines.append(contentsOf: metadataLines)
         return lines.joined(separator: "\n")
     }
 
     nonisolated private func taskDeepLink(for taskRef: String) -> URL? {
         return URL(string: "https://bob20250810.web.app/task/\(taskRef)")
+    }
+
+    nonisolated private func activityDeepLink(for taskRef: String) -> URL? {
+        // Assuming the task page supports an activity tab
+        return URL(string: "https://bob20250810.web.app/task/\(taskRef)?tab=activity")
     }
 
     func refreshThemeMappingFromRemote(force: Bool = false) async {
@@ -702,6 +716,7 @@ actor FirebaseSyncService {
             let tasksWithoutReminders = tasks.filter { $0.reminderId == nil && !isDone($0.status) }
             var taskById: [String: FbTask] = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
             var taskByReminderIdLatest: [String: FbTask] = [:]
+            var taskByReferenceLatest: [String: FbTask] = [:]
             for task in tasks {
                 guard let rid = task.reminderId, !rid.isEmpty else { continue }
                 if let existing = taskByReminderIdLatest[rid] {
@@ -712,6 +727,19 @@ actor FirebaseSyncService {
                     }
                 } else {
                     taskByReminderIdLatest[rid] = task
+                }
+            }
+            for task in tasks {
+                if let ref = task.reference?.lowercased(), !ref.isEmpty {
+                    if let existing = taskByReferenceLatest[ref] {
+                        let existingUpdated = existing.updatedAt ?? Date.distantPast
+                        let candidateUpdated = task.updatedAt ?? Date.distantPast
+                        if candidateUpdated > existingUpdated {
+                            taskByReferenceLatest[ref] = task
+                        }
+                    } else {
+                        taskByReferenceLatest[ref] = task
+                    }
                 }
             }
 
@@ -881,6 +909,45 @@ actor FirebaseSyncService {
                     continue
                 }
 
+                // Fallback: try taskRef from note header if present (human-readable)
+                if let taskRefToken = parsed.meta["taskRef"], !taskRefToken.isEmpty {
+                    let key = taskRefToken.lowercased()
+                    if let matchingTask = taskByReferenceLatest[key] {
+                        existingTaskIds.insert(matchingTask.id)
+
+                        let trimmedList = parsed.meta["list"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let trimmedListId = parsed.meta["listId"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let trimmedTag = parsed.meta["tags"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let reminderCalendarInfo = await MainActor.run { (id: reminder.calendar.calendarIdentifier, name: reminder.calendar.title) }
+
+                        var needsMetadataRepair = false
+                        if let expectedListName = matchingTask.reminderListName, !expectedListName.isEmpty,
+                           trimmedList.caseInsensitiveCompare(expectedListName) != .orderedSame {
+                            needsMetadataRepair = true
+                        }
+                        if let expectedListId = matchingTask.reminderListId, !expectedListId.isEmpty,
+                           trimmedListId != expectedListId {
+                            needsMetadataRepair = true
+                        }
+                        if let canonicalTag = matchingTask.tags.first?.trimmingCharacters(in: .whitespacesAndNewlines), !canonicalTag.isEmpty {
+                            if trimmedTag.caseInsensitiveCompare(canonicalTag) != .orderedSame {
+                                needsMetadataRepair = true
+                            }
+                        }
+
+                        if needsMetadataRepair {
+                            await restoreReminderMetadata(
+                                for: reminder,
+                                task: matchingTask,
+                                existingNotes: notes,
+                                previousTag: parsed.meta["tags"],
+                                userLines: parsed.userLines
+                            )
+                        }
+                        continue
+                    }
+                }
+
                 if let existingTask = taskByReminderIdLatest[rid] {
                     await restoreReminderMetadata(for: reminder, task: existingTask, existingNotes: notes, previousTag: parsed.meta["tags"], userLines: parsed.userLines)
                     existingTaskIds.insert(existingTask.id)
@@ -1028,7 +1095,6 @@ actor FirebaseSyncService {
                 rmb.calendar = cal
 
                 var noteMeta: [String: String] = [
-                    "taskId": task.id,
                     "status": statusString(for: task.status),
                     "synced": isoNow()
                 ]
@@ -1052,9 +1118,12 @@ actor FirebaseSyncService {
                 let rid: String? = await MainActor.run {
                     guard !dryRun, let saved = RemindersService.shared.createNew(with: reminderToCreate, in: cal) else { return nil }
                     var tagsChanged = false
-                    if saved.rmbUpdateTag(newTag: canonicalTag ?? sprintName, removing: nil) {
-                        tagsChanged = true
-                    }
+                    if saved.rmbUpdateTag(newTag: canonicalTag ?? sprintName, removing: nil) { tagsChanged = true }
+                    // Enrich with derived context tags for sprint/story/goal/theme
+                    if let sprintName, saved.rmbUpdateTag(newTag: "sprint-\(sprintName)", removing: nil) { tagsChanged = true }
+                    if let storyRef, saved.rmbUpdateTag(newTag: "story-\(storyRef)", removing: nil) { tagsChanged = true }
+                    if let goalRef, saved.rmbUpdateTag(newTag: "goal-\(goalRef)", removing: nil) { tagsChanged = true }
+                    if let themeName, saved.rmbUpdateTag(newTag: "theme-\(themeName)", removing: nil) { tagsChanged = true }
                     if tagsChanged {
                         RemindersService.shared.save(reminder: saved)
                     }
@@ -1278,12 +1347,21 @@ actor FirebaseSyncService {
                     if meta["reminderId"] != rid { meta["reminderId"] = rid }
                     metaChanged = true
                     if !dryRun { updated += 1 }
-                    // Ensure URL deep link exists with current taskRef
+                    // Ensure URL deep link exists with current taskRef and add derived tags
                     if !dryRun {
                         let linkURL = taskDeepLink(for: taskRefValue)
                         await MainActor.run {
+                            var needsSave = false
                             if let url = linkURL, reminder.url != url {
                                 reminder.url = url
+                                needsSave = true
+                            }
+                            // Derived tags: ensure sprint/story/goal/theme tags exist
+                            if let sprint = context.sprintName, reminder.rmbUpdateTag(newTag: "sprint-\(sprint)", removing: nil) { needsSave = true }
+                            if let story = context.storyRef, reminder.rmbUpdateTag(newTag: "story-\(story)", removing: nil) { needsSave = true }
+                            if let goal = context.goalRef, reminder.rmbUpdateTag(newTag: "goal-\(goal)", removing: nil) { needsSave = true }
+                            if let theme = context.themeName, reminder.rmbUpdateTag(newTag: "theme-\(theme)", removing: nil) { needsSave = true }
+                            if needsSave {
                                 RemindersService.shared.save(reminder: reminder)
                             }
                         }
