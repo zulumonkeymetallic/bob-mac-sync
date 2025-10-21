@@ -102,3 +102,9 @@ firebase_app_id_file.json
 
 # Git bundles (do not commit)
 *.bundle
+
+# Local build artifacts (do not commit)
+build_xcode/
+build.log
+build_xcode_build.log
+Reminders-MenuBar.dmg

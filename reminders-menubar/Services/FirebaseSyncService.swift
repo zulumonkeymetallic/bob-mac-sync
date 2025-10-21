@@ -272,6 +272,13 @@ actor FirebaseSyncService {
             if let activityURL = activityDeepLink(for: taskRef) {
                 lines.append("Activity: \(activityURL.absoluteString)")
             }
+            // Also include Story and Goal links when available
+            if let story = meta["storyRef"], !story.isEmpty {
+                lines.append("Story: https://bob.jc1.tech/stories/\(story)")
+            }
+            if let goal = meta["goalRef"], !goal.isEmpty {
+                lines.append("Goal: https://bob.jc1.tech/goals/\(goal)")
+            }
             lines.append("")
         }
         if !userLines.isEmpty {
@@ -286,12 +293,12 @@ actor FirebaseSyncService {
     }
 
     nonisolated private func taskDeepLink(for taskRef: String) -> URL? {
-        return URL(string: "https://bob20250810.web.app/task/\(taskRef)")
+        return URL(string: "https://bob.jc1.tech/tasks/\(taskRef)")
     }
 
     nonisolated private func activityDeepLink(for taskRef: String) -> URL? {
         // Assuming the task page supports an activity tab
-        return URL(string: "https://bob20250810.web.app/task/\(taskRef)?tab=activity")
+        return URL(string: "https://bob.jc1.tech/tasks/\(taskRef)?tab=activity")
     }
 
     func refreshThemeMappingFromRemote(force: Bool = false) async {
