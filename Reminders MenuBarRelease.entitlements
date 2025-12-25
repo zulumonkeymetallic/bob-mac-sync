@@ -14,9 +14,5 @@
 	<array>
 		<string>com.apple.CalendarAgent</string>
 	</array>
-	<key>com.apple.security.keychain-access-groups</key>
-	<array>
-		<string>$(AppIdentifierPrefix)com.jc1.tech.bob.mac</string>
-	</array>
 </dict>
 </plist>
