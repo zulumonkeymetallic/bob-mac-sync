@@ -46,10 +46,13 @@ class FirebaseManager: ObservableObject {
     }
 
     private func resolvedKeychainAccessGroup() -> String? {
-        if let entGroups = entitlementValue(for: "keychain-access-groups") as? [String],
-           let first = entGroups.first,
-           !first.isEmpty {
-            return first
+        let entitlementKeys = ["keychain-access-groups", "com.apple.security.keychain-access-groups"]
+        for key in entitlementKeys {
+            if let entGroups = entitlementValue(for: key) as? [String],
+               let first = entGroups.first,
+               !first.isEmpty {
+                return first
+            }
         }
         let bundleId = Bundle.main.bundleIdentifier ?? "?"
         if let prefix = Bundle.main.infoDictionary?["AppIdentifierPrefix"] as? String {
@@ -207,9 +210,12 @@ class FirebaseManager: ObservableObject {
 
         let googleUser = result.user
         let scopes = googleUser.grantedScopes?.joined(separator: ",") ?? "none"
+        let email = googleUser.profile?.email ?? "unknown"
+        let userId = googleUser.userID ?? "nil"
+        let tokenDetails = "\(tokenSummary(googleUser.accessToken, label: "access")) \(tokenSummary(googleUser.idToken, label: "id"))"
         logAuthEvent(
             level: "INFO",
-            "Google flow finished email=\(googleUser.profile?.email ?? "unknown") userId=\(googleUser.userID ?? "nil") scopes=\(scopes) \(tokenSummary(googleUser.accessToken, label: "access")) \(tokenSummary(googleUser.idToken, label: "id"))"
+            "Google flow finished email=\(email) userId=\(userId) scopes=\(scopes) \(tokenDetails)"
         )
 
         if let serverAuthCode = result.serverAuthCode {
