@@ -1386,6 +1386,19 @@ actor FirebaseSyncService {
         return normalizedText
     }
 
+    private func extractStoryRefToken(from text: String) -> String? {
+        let tokens = text.split { ch in
+            !(ch.isLetter || ch.isNumber || ch == "-")
+        }
+        for token in tokens {
+            let upper = token.uppercased()
+            if upper.hasPrefix("ST-"), upper.count >= 6 {
+                return upper
+            }
+        }
+        return nil
+    }
+
     private func awaitServerRef(
         for document: DocumentReference,
         ownerUid _: String,
@@ -1442,6 +1455,51 @@ actor FirebaseSyncService {
                     tag: "sync",
                     level: "WARN",
                     message: "fetchTaskByReference failed for \(normalized): \(error.localizedDescription)"
+                )
+            }
+        }
+        return nil
+    }
+
+    private func fetchStoryByReference(_ refValue: String, ownerUid: String, db: Firestore) async -> FbStory? {
+        let normalized = refValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        do {
+            let byRefSnapshot = try await db.collection("stories")
+                .whereField("ownerUid", isEqualTo: ownerUid)
+                .whereField("ref", isEqualTo: normalized)
+                .limit(to: 1)
+                .getDocuments()
+            if let doc = byRefSnapshot.documents.first, let story = toStory(doc, sprintLookup: [:]) {
+                return story
+            }
+            let byReferenceSnapshot = try await db.collection("stories")
+                .whereField("ownerUid", isEqualTo: ownerUid)
+                .whereField("reference", isEqualTo: normalized)
+                .limit(to: 1)
+                .getDocuments()
+            if let doc = byReferenceSnapshot.documents.first, let story = toStory(doc, sprintLookup: [:]) {
+                return story
+            }
+            let directDoc = try await db.collection("stories").document(normalized).getDocument()
+            if directDoc.exists, let story = toStory(directDoc, sprintLookup: [:]) {
+                return story
+            }
+        } catch {
+            let nsError = error as NSError
+            if nsError.domain == FirestoreErrorDomain,
+               nsError.code == FirestoreErrorCode.permissionDenied.rawValue {
+                SyncLogService.shared.logEvent(
+                    tag: "sync",
+                    level: "WARN",
+                    message: "fetchStoryByReference permission denied for \(normalized): \(error.localizedDescription)"
+                )
+                recordPermissionIfNeeded(error, context: "stories(refLookup)")
+            } else {
+                SyncLogService.shared.logEvent(
+                    tag: "sync",
+                    level: "WARN",
+                    message: "fetchStoryByReference failed for \(normalized): \(error.localizedDescription)"
                 )
             }
         }
@@ -2499,6 +2557,12 @@ actor FirebaseSyncService {
                     let reminderUrl = await MainActor.run { reminder.url?.absoluteString.lowercased() ?? "" }
                     let hasStoryUrl = reminderUrl.contains("bob.jc1.tech/stories/")
                     let isStoryReminderId = storyByReminderIdLatest[rid] != nil
+                    let titleText = await MainActor.run { reminder.title ?? "" }
+                    let reminderTags = await MainActor.run { reminder.rmbCurrentTags() }
+                    let noteStoryRef = extractStoryRefToken(from: notes ?? "")
+                    let titleStoryRef = extractStoryRefToken(from: titleText)
+                    let tagStoryRef = reminderTags.compactMap { extractStoryRefToken(from: $0) }.first
+                    let candidateStoryRef = noteStoryRef ?? titleStoryRef ?? tagStoryRef
                     if source == "story_reminder" || type == "story" || parsed.meta["storyRef"] != nil || hasStoryUrl || isStoryReminderId {
                         let titleText = await MainActor.run { sanitizeTitle(reminder.title) }
                         let cal = await MainActor.run { reminder.calendar.title }
@@ -2507,6 +2571,21 @@ actor FirebaseSyncService {
                         skippedImports.append(SkippedItem(
                             title: titleText,
                             reason: "story_reminder",
+                            calendar: cal,
+                            tags: tagList,
+                            due: due
+                        ))
+                        continue
+                    }
+                    if let candidateStoryRef,
+                       let _ = await fetchStoryByReference(candidateStoryRef, ownerUid: ownerUid, db: db) {
+                        let titleText = await MainActor.run { sanitizeTitle(reminder.title) }
+                        let cal = await MainActor.run { reminder.calendar.title }
+                        let tagList = await MainActor.run { reminder.rmbCurrentTags() }
+                        let due = await MainActor.run { reminder.dueDateComponents?.date }
+                        skippedImports.append(SkippedItem(
+                            title: titleText,
+                            reason: "story_ref_exists",
                             calendar: cal,
                             tags: tagList,
                             due: due
@@ -3873,6 +3952,7 @@ actor FirebaseSyncService {
                     let reminderTags = await MainActor.run { reminder.rmbCurrentTags() }
                     let reminderCompleted = await MainActor.run { reminder.isCompleted }
                     let previousStatus = matchedStory.status
+                    let storyIsDone = isStoryDone(matchedStory.status)
                     let reminderLastModified = await MainActor.run { reminder.lastModifiedDate ?? Date.distantPast }
                     let storyUpdated = matchedStory.updatedAt ?? Date.distantPast
                     var meta: [String: String] = [
@@ -3931,10 +4011,17 @@ actor FirebaseSyncService {
                     if let sprintId = matchedStory.sprintId { data["sprintId"] = sprintId }
                     if !tagsForReminder.isEmpty { data["tags"] = tagsForReminder }
                     var newStatusFromReminder: Int?
+                    var completionSkipped = false
                     if reminderCompleted {
-                        data["status"] = 4
-                        data["completedAt"] = nowMs
-                        newStatusFromReminder = 4
+                        if storyIsDone {
+                            data["status"] = (matchedStory.status as? Int) ?? 4
+                            if matchedStory.completedAt == nil {
+                                data["completedAt"] = nowMs
+                            }
+                            newStatusFromReminder = (matchedStory.status as? Int) ?? 4
+                        } else {
+                            completionSkipped = true
+                        }
                     }
                     if !dryRun {
                         try await db.collection("stories").document(matchedStory.id).setData(data, merge: true)
@@ -3950,6 +4037,7 @@ actor FirebaseSyncService {
                             "tags": tagsForReminder,
                             "completed": reminderCompleted,
                             "previousStatus": previousStatus ?? "unknown",
+                            "completionSkipped": completionSkipped,
                             "reminderLastModified": isoFormatter.string(from: reminderLastModified),
                             "storyUpdatedAt": isoFormatter.string(from: storyUpdated)
                         ],
