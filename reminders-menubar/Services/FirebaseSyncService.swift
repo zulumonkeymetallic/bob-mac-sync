@@ -2066,6 +2066,7 @@ actor FirebaseSyncService {
             // Continue; sync may still proceed
         }
         let dryRun = await MainActor.run { UserPreferences.shared.syncDryRun }
+        let shouldSyncStories = await MainActor.run { UserPreferences.shared.syncStories }
         var created = 0
         var updated = 0
         var errors: [String] = []
@@ -2315,7 +2316,7 @@ actor FirebaseSyncService {
             // Load current-sprint stories for reminder sync
             var stories: [FbStory] = []
             var storyByReminderIdLatest: [String: FbStory] = [:]
-            if !activeSprintIds.isEmpty {
+            if shouldSyncStories, !activeSprintIds.isEmpty {
                 let sprintChunks = Array(activeSprintIds)
                 let chunkSize = 10
                 for start in stride(from: 0, to: sprintChunks.count, by: chunkSize) {
@@ -2352,6 +2353,12 @@ actor FirebaseSyncService {
                         )
                     }
                 }
+            } else if !shouldSyncStories {
+                SyncLogService.shared.logEvent(
+                    tag: "sync",
+                    level: "INFO",
+                    message: "Story sync disabled; skipping story reminder load"
+                )
             }
             let tasksWithoutReminders = tasks.filter { $0.reminderId == nil && !isDone($0.status) }
             SyncLogService.shared.logEvent(
@@ -3769,132 +3776,134 @@ actor FirebaseSyncService {
             }
 
             // Create reminders for active sprint stories
-            let storiesToCreate = stories.filter { $0.reminderId == nil && !isStoryDone($0.status) }
-            if !storiesToCreate.isEmpty {
-                SyncLogService.shared.logEvent(
-                    tag: "sync",
-                    level: "INFO",
-                    message: "Stories to create reminders for: \(storiesToCreate.count)"
-                )
-            }
-            for story in storiesToCreate {
-                let storyRef = (story.ref?.isEmpty == false) ? story.ref! : "ST-\(story.id.suffix(6).uppercased())"
-                let sprintTag = makeSprintTag(from: story.sprintName)
-                func uniqueTags(_ list: [String]) -> [String] {
-                    var seen = Set<String>()
-                    return list.compactMap { raw in
-                        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return nil }
-                        let key = trimmed.lowercased()
-                        guard !seen.contains(key) else { return nil }
-                        seen.insert(key)
-                        return trimmed
-                    }
-                }
-                let cal: EKCalendar? = await MainActor.run {
-                    if let sprintName = story.sprintName, !sprintName.isEmpty {
-                        return RemindersService.shared.ensureCalendar(named: sprintName)
-                    }
-                    return preferredCalendar ?? RemindersService.shared.getDefaultCalendar()
-                }
-                guard let cal else { continue }
-
-                var storyReminder = RmbReminder()
-                storyReminder.title = story.title
-                if let dueMs = story.dueDate {
-                    storyReminder.hasDueDate = true
-                    storyReminder.hasTime = false
-                    storyReminder.date = Date(timeIntervalSince1970: dueMs / 1_000.0)
-                }
-                storyReminder.calendar = cal
-
-                var meta: [String: String] = [
-                    "status": statusStringForStory(story.status),
-                    "type": "story",
-                    "storyRef": storyRef,
-                    "synced": isoNow(),
-                    "list": cal.title,
-                    "listId": cal.calendarIdentifier
-                ]
-                if let sprintName = story.sprintName { meta["sprint"] = sprintName }
-                if let theme = story.themeName { meta["theme"] = theme }
-                if let rank = story.aiFocusStoryRank { meta["aiFocusStoryRank"] = "\(rank)" }
-                let (includeMetadata, detailLevel) = await metadataPreferences()
-                var tagCandidates = story.tags
-                tagCandidates.append("story")
-                if let sprintTag { tagCandidates.append(sprintTag) }
-                if let theme = story.themeName { tagCandidates.append(theme) }
-                let tagsForReminder = uniqueTags(tagCandidates)
-                if !tagsForReminder.isEmpty { meta["tags"] = tagsForReminder.joined(separator: ", ") }
-                storyReminder.notes = composeBobNote(
-                    meta: meta,
-                    userLines: [],
-                    includeMetadataBlock: includeMetadata,
-                    detailLevel: detailLevel
-                )
-                if let rank = story.aiFocusStoryRank, rank > 0, rank <= 3 {
-                    storyReminder.priority = .high
-                } else {
-                    storyReminder.priority = .none
-                }
-
-                let rid: String? = await MainActor.run {
-                    guard !dryRun,
-                          let saved = RemindersService.shared.createNew(with: storyReminder, in: cal)
-                    else { return nil }
-                    if includeMetadata {
-                        _ = saved.rmbSetTagsList(newTags: tagsForReminder)
-                    }
-                    if let url = storyDeepLink(for: storyRef) {
-                        saved.url = url
-                    }
-                    RemindersService.shared.save(reminder: saved)
-                    return saved.calendarItemIdentifier
-                }
-
-                var metaLog: [String: Any] = [
-                    "storyRef": storyRef,
-                    "calendar": cal.title
-                ]
-                if let sprint = story.sprintName { metaLog["sprint"] = sprint }
-                if let theme = story.themeName { metaLog["theme"] = theme }
-                if let due = story.dueDate { metaLog["due"] = isoString(forMillis: due) }
-                if let rank = story.aiFocusStoryRank { metaLog["aiFocusStoryRank"] = rank }
-                if !tagsForReminder.isEmpty { metaLog["tags"] = tagsForReminder }
-                SyncLogService.shared.logSyncDetail(
-                    direction: .toReminders,
-                    action: "createStoryReminder",
-                    taskId: nil,
-                    storyId: story.id,
-                    metadata: metaLog,
-                    dryRun: dryRun
-                )
-                if let rid {
-                    created += 1
-                    storyByReminderIdLatest[rid] = FbStory(
-                        id: story.id,
-                        title: story.title,
-                        status: story.status,
-                        reminderId: rid,
-                        sprintId: story.sprintId,
-                        sprintName: story.sprintName,
-                        ref: story.ref,
-                        tags: tagsForReminder,
-                        updatedAt: story.updatedAt,
-                        completedAt: story.completedAt,
-                        dueDate: story.dueDate,
-                        themeName: story.themeName,
-                        aiFocusStoryRank: story.aiFocusStoryRank
+            if shouldSyncStories {
+                let storiesToCreate = stories.filter { $0.reminderId == nil && !isStoryDone($0.status) }
+                if !storiesToCreate.isEmpty {
+                    SyncLogService.shared.logEvent(
+                        tag: "sync",
+                        level: "INFO",
+                        message: "Stories to create reminders for: \(storiesToCreate.count)"
                     )
-                    let ref = db.collection("stories").document(story.id)
-                    batch.setData([
-                        "updatedAt": FieldValue.serverTimestamp(),
-                        "serverUpdatedAt": FieldValue.serverTimestamp(),
-                        "reminderId": rid,
-                        "reminderListId": cal.calendarIdentifier,
-                        "reminderListName": cal.title,
-                        "tags": tagsForReminder
-                    ], forDocument: ref, merge: true)
+                }
+                for story in storiesToCreate {
+                    let storyRef = (story.ref?.isEmpty == false) ? story.ref! : "ST-\(story.id.suffix(6).uppercased())"
+                    let sprintTag = makeSprintTag(from: story.sprintName)
+                    func uniqueTags(_ list: [String]) -> [String] {
+                        var seen = Set<String>()
+                        return list.compactMap { raw in
+                            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else { return nil }
+                            let key = trimmed.lowercased()
+                            guard !seen.contains(key) else { return nil }
+                            seen.insert(key)
+                            return trimmed
+                        }
+                    }
+                    let cal: EKCalendar? = await MainActor.run {
+                        if let sprintName = story.sprintName, !sprintName.isEmpty {
+                            return RemindersService.shared.ensureCalendar(named: sprintName)
+                        }
+                        return preferredCalendar ?? RemindersService.shared.getDefaultCalendar()
+                    }
+                    guard let cal else { continue }
+
+                    var storyReminder = RmbReminder()
+                    storyReminder.title = story.title
+                    if let dueMs = story.dueDate {
+                        storyReminder.hasDueDate = true
+                        storyReminder.hasTime = false
+                        storyReminder.date = Date(timeIntervalSince1970: dueMs / 1_000.0)
+                    }
+                    storyReminder.calendar = cal
+
+                    var meta: [String: String] = [
+                        "status": statusStringForStory(story.status),
+                        "type": "story",
+                        "storyRef": storyRef,
+                        "synced": isoNow(),
+                        "list": cal.title,
+                        "listId": cal.calendarIdentifier
+                    ]
+                    if let sprintName = story.sprintName { meta["sprint"] = sprintName }
+                    if let theme = story.themeName { meta["theme"] = theme }
+                    if let rank = story.aiFocusStoryRank { meta["aiFocusStoryRank"] = "\(rank)" }
+                    let (includeMetadata, detailLevel) = await metadataPreferences()
+                    var tagCandidates = story.tags
+                    tagCandidates.append("story")
+                    if let sprintTag { tagCandidates.append(sprintTag) }
+                    if let theme = story.themeName { tagCandidates.append(theme) }
+                    let tagsForReminder = uniqueTags(tagCandidates)
+                    if !tagsForReminder.isEmpty { meta["tags"] = tagsForReminder.joined(separator: ", ") }
+                    storyReminder.notes = composeBobNote(
+                        meta: meta,
+                        userLines: [],
+                        includeMetadataBlock: includeMetadata,
+                        detailLevel: detailLevel
+                    )
+                    if let rank = story.aiFocusStoryRank, rank > 0, rank <= 3 {
+                        storyReminder.priority = .high
+                    } else {
+                        storyReminder.priority = .none
+                    }
+
+                    let rid: String? = await MainActor.run {
+                        guard !dryRun,
+                              let saved = RemindersService.shared.createNew(with: storyReminder, in: cal)
+                        else { return nil }
+                        if includeMetadata {
+                            _ = saved.rmbSetTagsList(newTags: tagsForReminder)
+                        }
+                        if let url = storyDeepLink(for: storyRef) {
+                            saved.url = url
+                        }
+                        RemindersService.shared.save(reminder: saved)
+                        return saved.calendarItemIdentifier
+                    }
+
+                    var metaLog: [String: Any] = [
+                        "storyRef": storyRef,
+                        "calendar": cal.title
+                    ]
+                    if let sprint = story.sprintName { metaLog["sprint"] = sprint }
+                    if let theme = story.themeName { metaLog["theme"] = theme }
+                    if let due = story.dueDate { metaLog["due"] = isoString(forMillis: due) }
+                    if let rank = story.aiFocusStoryRank { metaLog["aiFocusStoryRank"] = rank }
+                    if !tagsForReminder.isEmpty { metaLog["tags"] = tagsForReminder }
+                    SyncLogService.shared.logSyncDetail(
+                        direction: .toReminders,
+                        action: "createStoryReminder",
+                        taskId: nil,
+                        storyId: story.id,
+                        metadata: metaLog,
+                        dryRun: dryRun
+                    )
+                    if let rid {
+                        created += 1
+                        storyByReminderIdLatest[rid] = FbStory(
+                            id: story.id,
+                            title: story.title,
+                            status: story.status,
+                            reminderId: rid,
+                            sprintId: story.sprintId,
+                            sprintName: story.sprintName,
+                            ref: story.ref,
+                            tags: tagsForReminder,
+                            updatedAt: story.updatedAt,
+                            completedAt: story.completedAt,
+                            dueDate: story.dueDate,
+                            themeName: story.themeName,
+                            aiFocusStoryRank: story.aiFocusStoryRank
+                        )
+                        let ref = db.collection("stories").document(story.id)
+                        batch.setData([
+                            "updatedAt": FieldValue.serverTimestamp(),
+                            "serverUpdatedAt": FieldValue.serverTimestamp(),
+                            "reminderId": rid,
+                            "reminderListId": cal.calendarIdentifier,
+                            "reminderListName": cal.title,
+                            "tags": tagsForReminder
+                        ], forDocument: ref, merge: true)
+                    }
                 }
             }
 

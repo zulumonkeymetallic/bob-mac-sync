@@ -105,6 +105,12 @@ struct SettingsBarGearMenu: View {
                             }
                         }
                     }
+                    Button(action: { userPreferences.syncStories.toggle() }) {
+                        SelectableView(
+                            title: "Sync Stories",
+                            isSelected: userPreferences.syncStories
+                        )
+                    }
                     Divider()
                     // Duplicate maintenance
                     Menu("Duplicates") {

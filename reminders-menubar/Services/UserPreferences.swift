@@ -40,6 +40,7 @@ private enum PreferencesKeys {
     static let backgroundSyncIntervalMinutes = "backgroundSyncIntervalMinutes"
     // Sync behavior
     static let syncDryRun = "syncDryRun"
+    static let syncStories = "syncStories"
     static let showBobMetadataInNotes = "showBobMetadataInNotes"
     static let metadataDetailLevel = "metadataDetailLevel"
     static let syncInstanceId = "syncInstanceId"
@@ -321,6 +322,10 @@ class UserPreferences: ObservableObject {
 
     @Published var syncDryRun: Bool = defaults.bool(forKey: PreferencesKeys.syncDryRun) {
         didSet { UserPreferences.defaults.set(syncDryRun, forKey: PreferencesKeys.syncDryRun) }
+    }
+
+    @Published var syncStories: Bool = defaults.bool(forKey: PreferencesKeys.syncStories) {
+        didSet { UserPreferences.defaults.set(syncStories, forKey: PreferencesKeys.syncStories) }
     }
 
     @Published var showBobMetadataInNotes: Bool = {

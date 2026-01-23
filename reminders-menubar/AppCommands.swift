@@ -26,6 +26,10 @@ struct AppCommands: Commands {
                 Text("Show Bob Metadata in Notes")
             }
 
+            Toggle(isOn: $prefs.syncStories) {
+                Text("Sync Stories")
+            }
+
             Menu("Metadata Detail") {
                 ForEach(MetadataDetailLevel.allCases) { level in
                     Button(action: { prefs.metadataDetailLevel = level }) {
