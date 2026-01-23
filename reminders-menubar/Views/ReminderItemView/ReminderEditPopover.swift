@@ -1,5 +1,5 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct ReminderEditPopover: View {
     @EnvironmentObject var remindersData: RemindersData
@@ -18,7 +18,7 @@ struct ReminderEditPopover: View {
     init(isPresented: Binding<Bool>, focusOnTitle: Binding<Bool>, reminder: EKReminder, reminderHasChildren: Bool) {
         _isPresented = isPresented
         _focusOnTitle = focusOnTitle
-        self.ekReminder = reminder
+        ekReminder = reminder
         self.reminderHasChildren = reminderHasChildren
         _rmbReminder = State(initialValue: RmbReminder(reminder: reminder))
     }

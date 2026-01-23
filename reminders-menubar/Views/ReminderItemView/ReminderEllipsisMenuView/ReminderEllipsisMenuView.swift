@@ -1,5 +1,5 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct ReminderEllipsisMenuView: View {
     @Binding var showingEditPopover: Bool

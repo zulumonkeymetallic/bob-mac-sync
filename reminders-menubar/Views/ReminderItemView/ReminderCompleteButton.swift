@@ -1,5 +1,5 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct ReminderCompleteButton: View {
     var reminderItem: ReminderItem
@@ -9,7 +9,7 @@ struct ReminderCompleteButton: View {
             reminderItem.reminder.isCompleted.toggle()
             RemindersService.shared.save(reminder: reminderItem.reminder)
             if reminderItem.reminder.isCompleted {
-                reminderItem.childReminders.uncompleted.forEach { uncompletedChild in
+                for uncompletedChild in reminderItem.childReminders.uncompleted {
                     uncompletedChild.reminder.isCompleted = true
                     RemindersService.shared.save(reminder: uncompletedChild.reminder)
                 }

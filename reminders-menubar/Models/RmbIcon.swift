@@ -14,22 +14,22 @@ enum RmbIcon: String, CaseIterable {
     case sfsymbols1 = "checklist"
     case sfsymbols2 = "circle.inset.filled"
     case smalldot = "icon-small-dot"
-    
+
     static var defaultIcon: RmbIcon {
-        return self.note1
+        note1
     }
-    
+
     var image: NSImage {
-        if let img = NSImage(named: self.rawValue) {
+        if let img = NSImage(named: rawValue) {
             return img
         }
-        if let symbolImage = NSImage(systemSymbolName: self.rawValue, accessibilityDescription: nil) {
+        if let symbolImage = NSImage(systemSymbolName: rawValue, accessibilityDescription: nil) {
             return symbolImage
         }
         return NSImage(size: NSSize(width: 16, height: 16))
     }
 
     var name: String {
-        return self.rawValue
+        rawValue
     }
 }

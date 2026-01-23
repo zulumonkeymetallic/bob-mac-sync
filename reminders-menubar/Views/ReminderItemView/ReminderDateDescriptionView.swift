@@ -1,5 +1,5 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct ReminderDateDescriptionView: View {
     var dateDescription: String

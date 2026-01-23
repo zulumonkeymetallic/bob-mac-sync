@@ -6,6 +6,6 @@ extension Array {
         let partition = elements.partition(by: { condition($0) })
         let matching = Array(elements[partition...])
         let notMatching = Array(elements[..<partition])
-        return(matching, notMatching)
+        return (matching, notMatching)
     }
 }

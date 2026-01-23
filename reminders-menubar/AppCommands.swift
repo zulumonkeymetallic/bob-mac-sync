@@ -26,6 +26,18 @@ struct AppCommands: Commands {
                 Text("Show Bob Metadata in Notes")
             }
 
+            Menu("Metadata Detail") {
+                ForEach(MetadataDetailLevel.allCases) { level in
+                    Button(action: { prefs.metadataDetailLevel = level }) {
+                        SelectableView(
+                            title: level.displayName,
+                            isSelected: prefs.metadataDetailLevel == level,
+                            withPadding: false
+                        )
+                    }
+                }
+            }
+
             // Delete all duplicates action
             Button("Delete All Duplicates…") {
                 Task {
@@ -33,7 +45,11 @@ struct AppCommands: Commands {
                     let msg = result.error == nil ?
                         "Deleted \(result.deleted) duplicates across \(result.groups) groups" :
                         "Delete duplicates failed: \(result.error!)"
-                    SyncLogService.shared.logEvent(tag: "dedupe", level: result.error == nil ? "INFO" : "ERROR", message: msg)
+                    SyncLogService.shared.logEvent(
+                        tag: "dedupe",
+                        level: result.error == nil ? "INFO" : "ERROR",
+                        message: msg
+                    )
                 }
             }
 
@@ -52,35 +68,35 @@ struct AppCommands: Commands {
                     Text(verbatim: "Select All")
                 }
                 .keyboardShortcut(KeyEquivalent("a"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Cut")
                 }
                 .keyboardShortcut(KeyEquivalent("x"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Copy")
                 }
                 .keyboardShortcut(KeyEquivalent("c"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Paste")
                 }
                 .keyboardShortcut(KeyEquivalent("v"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Undo")
                 }
                 .keyboardShortcut(KeyEquivalent("z"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
                 } label: {

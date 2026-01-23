@@ -54,7 +54,7 @@ struct FirebaseAuthView: View {
             } label: {
                 Text("Bob Token (optional)")
             }
-            
+
             if busy { ProgressView().controlSize(.small) }
             if !message.isEmpty { Text(message).font(.footnote).foregroundColor(.secondary) }
         }
@@ -75,8 +75,10 @@ struct FirebaseAuthView: View {
 
     private func signInAnon() async {
         busy = true; defer { busy = false }
-        do { try await fb.signInAnonymously(); message = "Signed in anonymously" }
-        catch { message = describe(error, context: "Anonymous sign-in") }
+        do { try await fb.signInAnonymously(); message = "Signed in anonymously" } catch { message = describe(
+            error,
+            context: "Anonymous sign-in"
+        ) }
     }
 
     private func signInWithToken() async {
@@ -89,8 +91,7 @@ struct FirebaseAuthView: View {
             try await fb.signIn(withCustomToken: token)
             await MainActor.run { customToken = "" }
             message = "Signed in"
-        }
-        catch { message = describe(error, context: "Custom token sign-in") }
+        } catch { message = describe(error, context: "Custom token sign-in") }
     }
 
     private func signInGoogle() async {
@@ -118,25 +119,28 @@ struct FirebaseAuthView: View {
         if let reason = nsError.userInfo[NSLocalizedFailureReasonErrorKey] as? String, !reason.isEmpty {
             parts.append(reason)
         }
-#if canImport(FirebaseAuth)
+        #if canImport(FirebaseAuth)
         if nsError.domain == AuthErrorDomain,
            AuthErrorCode.Code(rawValue: nsError.code) == .keychainError {
-            parts.append("macOS blocked keychain access. Ensure the app has the keychain entitlement or run a signed build.")
+            parts
+                .append(
+                    "macOS blocked keychain access. Ensure the app has the keychain entitlement or run a signed build."
+                )
         }
-#endif
+        #endif
         if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
             parts.append(underlying.localizedDescription)
         }
         let payload = parts.joined(separator: " — ")
         var debugParts: [String] = []
-#if canImport(FirebaseAuth)
+        #if canImport(FirebaseAuth)
         let uid = Auth.auth().currentUser?.uid ?? "nil"
         debugParts.append("uid=\(uid)")
         if nsError.domain == AuthErrorDomain,
            AuthErrorCode.Code(rawValue: nsError.code) == .keychainError {
             debugParts.append("keychainGroup=\(keychainAccessGroupHint())")
         }
-#endif
+        #endif
         let logMessage = ([context + ": " + payload] + debugParts).joined(separator: " | ")
         logAuthUI(level: "ERROR", message: logMessage)
         return payload

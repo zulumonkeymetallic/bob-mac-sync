@@ -1,5 +1,5 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct ReminderChangeDueDateOptionMenu: View {
     var reminder: EKReminder
@@ -13,13 +13,13 @@ struct ReminderChangeDueDateOptionMenu: View {
         var title: String {
             switch self {
             case .today:
-                return rmbLocalized(.editReminderDueDateTodayOption)
+                rmbLocalized(.editReminderDueDateTodayOption)
             case .tomorrow:
-                return rmbLocalized(.editReminderDueDateTomorrowOption)
+                rmbLocalized(.editReminderDueDateTomorrowOption)
             case .thisWeekend:
-                return rmbLocalized(.editReminderDueDateThisWeekendOption)
+                rmbLocalized(.editReminderDueDateThisWeekendOption)
             case .nextWeek:
-                return rmbLocalized(.editReminderDueDateNextWeekOption)
+                rmbLocalized(.editReminderDueDateNextWeekOption)
             }
         }
 

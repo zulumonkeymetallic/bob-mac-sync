@@ -1,6 +1,6 @@
 import Cocoa
-import SwiftUI
 import Combine
+import SwiftUI
 #if canImport(GoogleSignIn)
 import GoogleSignIn
 #endif
@@ -8,7 +8,7 @@ import GoogleSignIn
 @main
 struct RemindersMenuBar: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+
     var body: some Scene {
         Settings {
             EmptyView()
@@ -21,16 +21,16 @@ struct RemindersMenuBar: App {
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
-    static private(set) var shared: AppDelegate!
-    
+    private(set) static var shared: AppDelegate!
+
     private var didCloseCancellationToken: AnyCancellable?
     private var didCloseEventDate = Date.distantPast
-    
+
     private var sharedAuthorizationErrorMessage: String?
 
     let popover = NSPopover()
     lazy var statusBarItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    
+
     let remindersData = RemindersData()
 
     var contentViewController: NSViewController {
@@ -38,12 +38,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return NSHostingController(rootView: contentView.environmentObject(remindersData))
     }
 
-    func applicationDidFinishLaunching(_ aNotification: Notification) {
+    func applicationDidFinishLaunching(_: Notification) {
         AppDelegate.shared = self
-        
+
         AppUpdateCheckHelper.shared.startBackgroundActivity()
         BackgroundSyncService.shared.applyPreference()
-        
+
         changeBehaviorToDismissIfNeeded()
         configurePopover()
         configureMenuBarButton()
@@ -52,41 +52,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ensureRemindersAccessOnLaunch()
     }
 
-#if canImport(GoogleSignIn)
-    func application(_ application: NSApplication, open urls: [URL]) {
+    #if canImport(GoogleSignIn)
+    func application(_: NSApplication, open urls: [URL]) {
         for url in urls {
             if GIDSignIn.sharedInstance.handle(url) {
                 break
             }
         }
     }
-#endif
-    
+    #endif
+
     private func configurePopover() {
         popover.contentSize = NSSize(width: 340, height: 460)
         popover.animates = false
-        
+
         if RemindersService.shared.hasFullRemindersAccess() {
             popover.contentViewController = contentViewController
         }
     }
-    
+
     func updateMenuBarTodayCount(to todayCount: Int) {
         let buttonTitle = todayCount > 0 ? String(todayCount) : ""
         statusBarItem.button?.title = buttonTitle
     }
-    
+
     func loadMenuBarIcon() {
         let menuBarIcon = UserPreferences.shared.reminderMenuBarIcon
         statusBarItem.button?.image = menuBarIcon.image
     }
-    
+
     private func configureMenuBarButton() {
         loadMenuBarIcon()
         statusBarItem.button?.imagePosition = .imageLeading
         statusBarItem.button?.action = #selector(togglePopover)
     }
-    
+
     private func configureKeyboardShortcut() {
         KeyboardShortcutService.shared.action(for: .openRemindersMenuBar) { [weak self] in
             self?.togglePopover()
@@ -95,7 +95,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ManualSyncService.shared.trigger(reason: "Keyboard Shortcut")
         }
     }
-    
+
     private func configureDidCloseNotification() {
         // NOTE: There is an issue where if the menu bar button is clicked on its top part to close the popover
         // there will be a didClose event and then togglePopover will be called (reopening the popover).
@@ -114,7 +114,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         requestAuthorization()
     }
-    
+
     private func changeBehaviorToDismissIfNeeded() {
         popover.behavior = .transient
     }
@@ -124,15 +124,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             requestAuthorization()
             return
         }
-        
+
         guard let button = statusBarItem.button else {
             return
         }
-        
+
         if popover.contentViewController == nil {
             popover.contentViewController = contentViewController
         }
-        
+
         if popover.isShown || didCloseEventDate.elapsedTimeInterval < 0.01 {
             didCloseEventDate = .distantPast
             popover.performClose(button)
@@ -164,13 +164,17 @@ extension AppDelegate: NSAlertDelegate {
                 if #available(macOS 14.0, *), status == .writeOnly {
                     helpfulMessage = "macOS granted write-only access. Open System Settings → Privacy & Security → Reminders and change Reminders MenuBar to Allow Full Access."
                 }
-                print("Access to reminders not granted:", helpfulMessage ?? "no error description", "(status: \(String(describing: status)))")
+                print(
+                    "Access to reminders not granted:",
+                    helpfulMessage ?? "no error description",
+                    "(status: \(String(describing: status)))"
+                )
                 self.sharedAuthorizationErrorMessage = helpfulMessage
                 self.presentNoAuthorizationAlert()
             }
         }
     }
-    
+
     private func presentNoAuthorizationAlert() {
         let alert = NSAlert()
         alert.messageText = rmbLocalized(.appNoRemindersAccessAlertMessage, arguments: AppConstants.appName)
@@ -187,11 +191,11 @@ extension AppDelegate: NSAlertDelegate {
             alert.delegate = self
             alert.showsHelp = true
         }
-        
+
         alert.addButton(withTitle: rmbLocalized(.okButton))
         alert.addButton(withTitle: rmbLocalized(.openSystemPreferencesButton))
         alert.addButton(withTitle: rmbLocalized(.appQuitButton)).hasDestructiveAction = true
-        
+
         NSApp.activate(ignoringOtherApps: true)
         let modalResponse = alert.runModal()
         switch modalResponse {
@@ -205,15 +209,15 @@ extension AppDelegate: NSAlertDelegate {
             sharedAuthorizationErrorMessage = nil
         }
     }
-    
-    internal func alertShowHelp(_ alert: NSAlert) -> Bool {
+
+    func alertShowHelp(_: NSAlert) -> Bool {
         let helpAlert = NSAlert()
         let errorDescription = sharedAuthorizationErrorMessage ?? "no error description"
         helpAlert.icon = NSImage(systemSymbolName: "calendar.badge.exclamationmark", accessibilityDescription: nil)
         helpAlert.messageText = rmbLocalized(.appNoRemindersAccessAlertMessage, arguments: AppConstants.appName)
         helpAlert.informativeText = "Authorization error: \(errorDescription)"
         helpAlert.runModal()
-        
+
         return true
     }
 }

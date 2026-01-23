@@ -27,7 +27,7 @@ struct ReminderExternalLinksView: View {
 
     struct ReminderExternalLinkStyle: ViewModifier {
         func body(content: Content) -> some View {
-            return content
+            content
                 .font(.callout)
                 .foregroundColor(.primary)
                 .frame(height: 24)

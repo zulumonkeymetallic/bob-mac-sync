@@ -4,8 +4,8 @@ import SwiftUI
 // https://stackoverflow.com/questions/59813943/swiftui-remove-focus-ring-highlight-border-from-macos-textfield
 
 extension NSTextField {
-    open override var focusRingType: NSFocusRingType {
+    override open var focusRingType: NSFocusRingType {
         get { .none }
-        set { }
+        set {}
     }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 
 struct UpcomingRemindersContent: View {
     @EnvironmentObject var remindersData: RemindersData
-    
+
     var body: some View {
         Group {
             if remindersData.upcomingReminders.isEmpty {

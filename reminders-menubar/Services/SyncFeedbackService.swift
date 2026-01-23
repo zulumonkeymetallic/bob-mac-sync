@@ -1,12 +1,12 @@
-import Foundation
 import Combine
+import Foundation
 
 @MainActor
 final class SyncFeedbackService: ObservableObject {
     static let shared = SyncFeedbackService()
     private init() {}
 
-    @Published var toastMessage: String? = nil
+    @Published var toastMessage: String?
 
     func show(message: String, duration: TimeInterval = 3.0) {
         toastMessage = message
@@ -16,4 +16,3 @@ final class SyncFeedbackService: ObservableObject {
         }
     }
 }
-

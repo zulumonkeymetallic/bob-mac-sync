@@ -7,9 +7,10 @@ import Security
 #endif
 
 #if canImport(FirebaseCore)
-import FirebaseCore
 import FirebaseAuth
+import FirebaseCore
 import FirebaseFirestore
+
 // Optional Google Sign-In (SPM: GoogleSignIn)
 #if canImport(GoogleSignIn)
 import GoogleSignIn
@@ -129,8 +130,8 @@ class FirebaseManager: ObservableObject {
             guard let self else { return }
             let email = user?.email ?? "nil"
             let uid = user?.uid ?? "nil"
-            let providerIds = user?.providerData.map { $0.providerID }.joined(separator: ",") ?? "none"
-            self.logAuthEvent(
+            let providerIds = user?.providerData.map(\.providerID).joined(separator: ",") ?? "none"
+            logAuthEvent(
                 level: "DEBUG",
                 "Auth state changed uid=\(uid) email=\(email) isAnonymous=\(user?.isAnonymous ?? false) providers=\(providerIds)"
             )
@@ -145,7 +146,10 @@ class FirebaseManager: ObservableObject {
         do {
             let result = try await Auth.auth().signIn(withCustomToken: token)
             let user = result.user
-            logAuthEvent(level: "INFO", "Custom token sign-in succeeded uid=\(user.uid) email=\(user.email ?? "nil")")
+            logAuthEvent(
+                level: "INFO",
+                "Custom token sign-in succeeded uid=\(user.uid) email=\(user.email ?? "nil")"
+            )
         } catch {
             logAuthFailure(error, context: "Custom token sign-in")
             throw error
@@ -242,7 +246,7 @@ class FirebaseManager: ObservableObject {
         do {
             let authData = try await Auth.auth().signIn(with: credential)
             let user = authData.user
-            let providers = user.providerData.map { $0.providerID }.joined(separator: ",")
+            let providers = user.providerData.map(\.providerID).joined(separator: ",")
             logAuthEvent(
                 level: "INFO",
                 "Firebase sign-in via Google succeeded uid=\(user.uid) email=\(user.email ?? "nil") providers=\(providers)"
@@ -259,7 +263,7 @@ class FirebaseManager: ObservableObject {
         GIDSignIn.sharedInstance.signOut()
     }
     #else
-    func signInWithGoogle(presenting window: NSWindow) async throws {
+    func signInWithGoogle(presenting _: NSWindow) async throws {
         // Satisfy SwiftLint async-without-await while keeping the async signature used by callers
         await Task.yield()
         let err = NSError(
@@ -269,7 +273,8 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
-    func googleSignOut() { }
+
+    func googleSignOut() {}
     #endif
 }
 
@@ -285,8 +290,8 @@ class FirebaseManager: ObservableObject {
 
     @Published var currentUser: Any?
 
-    func configureIfNeeded() { }
-    func signIn(withCustomToken token: String) async throws {
+    func configureIfNeeded() {}
+    func signIn(withCustomToken _: String) async throws {
         await Task.yield()
         let err = NSError(
             domain: "FirebaseMissing",
@@ -295,6 +300,7 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
+
     func signInAnonymously() async throws {
         await Task.yield()
         let err = NSError(
@@ -304,11 +310,12 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
-    func signOut() throws { }
+
+    func signOut() throws {}
 
     // Provide stubs so UI compiles even without GoogleSignIn/Firebase
     @MainActor
-    func signInWithGoogle(presenting presenter: NSViewController) async throws {
+    func signInWithGoogle(presenting _: NSViewController) async throws {
         await Task.yield()
         let err = NSError(
             domain: "FirebaseMissing",
@@ -319,7 +326,7 @@ class FirebaseManager: ObservableObject {
     }
 
     @MainActor
-    func googleSignOut() { }
+    func googleSignOut() {}
 }
 
 #endif

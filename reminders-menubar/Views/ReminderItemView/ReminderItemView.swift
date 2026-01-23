@@ -1,5 +1,5 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 @MainActor
 struct ReminderItemView: View {
@@ -103,7 +103,7 @@ struct ReminderItemView: View {
     }
 
     func shouldShowEllipsisButton() -> Bool {
-        return reminderItemIsHovered || showingEditPopover
+        reminderItemIsHovered || showingEditPopover
     }
 
     func removeReminderAlert() -> Alert {

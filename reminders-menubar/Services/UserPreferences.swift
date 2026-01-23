@@ -1,5 +1,19 @@
-import SwiftUI
 import ServiceManagement
+import SwiftUI
+
+enum MetadataDetailLevel: String, CaseIterable, Identifiable {
+    case full
+    case minimal
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .full: return "Full metadata"
+        case .minimal: return "Minimal metadata"
+        }
+    }
+}
 
 private enum PreferencesKeys {
     static let reminderMenuBarIcon = "reminderMenuBarIcon"
@@ -27,6 +41,7 @@ private enum PreferencesKeys {
     // Sync behavior
     static let syncDryRun = "syncDryRun"
     static let showBobMetadataInNotes = "showBobMetadataInNotes"
+    static let metadataDetailLevel = "metadataDetailLevel"
     static let syncInstanceId = "syncInstanceId"
     // Theme→Calendar mapping (theme name -> calendar identifier)
     static let themeCalendarMap = "themeCalendarMap"
@@ -40,14 +55,14 @@ private enum PreferencesKeys {
 }
 
 class UserPreferences: ObservableObject {
-    static private(set) var shared = UserPreferences()
-    
+    private(set) static var shared = UserPreferences()
+
     private init() {
         // This prevents others from using the default '()' initializer for this class.
     }
-    
+
     private static let defaults = UserDefaults.standard
-    
+
     @Published var remindersMenuBarOpeningEvent = false
     /// Stable per-install identifier used for sync diagnostics/claims.
     var syncInstanceId: String {
@@ -59,7 +74,7 @@ class UserPreferences: ObservableObject {
         UserPreferences.defaults.set(newId, forKey: PreferencesKeys.syncInstanceId)
         return newId
     }
-    
+
     @Published var reminderMenuBarIcon: RmbIcon = {
         guard let menuBarIconString = defaults.string(forKey: PreferencesKeys.reminderMenuBarIcon) else {
             return RmbIcon.defaultIcon
@@ -70,52 +85,49 @@ class UserPreferences: ObservableObject {
             UserPreferences.defaults.set(reminderMenuBarIcon.rawValue, forKey: PreferencesKeys.reminderMenuBarIcon)
         }
     }
-    
+
     var preferredCalendarIdentifiersFilter: [String]? {
         get {
-            return UserPreferences.defaults.stringArray(forKey: PreferencesKeys.calendarIdentifiersFilter)
+            UserPreferences.defaults.stringArray(forKey: PreferencesKeys.calendarIdentifiersFilter)
         }
         set {
             UserPreferences.defaults.set(newValue, forKey: PreferencesKeys.calendarIdentifiersFilter)
         }
     }
-    
+
     var preferredCalendarIdentifierForSaving: String? {
         get {
-            return UserPreferences.defaults.string(forKey: PreferencesKeys.calendarIdentifierForSaving)
+            UserPreferences.defaults.string(forKey: PreferencesKeys.calendarIdentifierForSaving)
         }
         set {
             UserPreferences.defaults.set(newValue, forKey: PreferencesKeys.calendarIdentifierForSaving)
         }
     }
-    
-    @Published var autoSuggestToday: Bool = {
-        return defaults.bool(forKey: PreferencesKeys.autoSuggestTodayForNewReminders)
-    }() {
+
+    @Published var autoSuggestToday: Bool = defaults.bool(forKey: PreferencesKeys.autoSuggestTodayForNewReminders) {
         didSet {
             UserPreferences.defaults.set(autoSuggestToday, forKey: PreferencesKeys.autoSuggestTodayForNewReminders)
         }
     }
-    
-    @Published var removeParsedDateFromTitle: Bool = {
-        return defaults.boolWithDefaultValueTrue(forKey: PreferencesKeys.removeParsedDateFromTitle)
-    }() {
+
+    @Published var removeParsedDateFromTitle: Bool = defaults
+    .boolWithDefaultValueTrue(forKey: PreferencesKeys.removeParsedDateFromTitle) {
         didSet {
             UserPreferences.defaults.set(removeParsedDateFromTitle, forKey: PreferencesKeys.removeParsedDateFromTitle)
         }
     }
-    
-    @Published var showUncompletedOnly: Bool = {
-        return defaults.boolWithDefaultValueTrue(forKey: PreferencesKeys.showUncompletedOnly)
-    }() {
+
+    @Published var showUncompletedOnly: Bool = defaults
+    .boolWithDefaultValueTrue(forKey: PreferencesKeys.showUncompletedOnly) {
         didSet {
             UserPreferences.defaults.set(showUncompletedOnly, forKey: PreferencesKeys.showUncompletedOnly)
         }
     }
-    
+
     @Published var upcomingRemindersInterval: ReminderInterval = {
         guard let intervalData = defaults.data(forKey: PreferencesKeys.upcomingRemindersInterval),
-              let interval = try? JSONDecoder().decode(ReminderInterval.self, from: intervalData) else {
+              let interval = try? JSONDecoder().decode(ReminderInterval.self, from: intervalData)
+        else {
             return .today
         }
         return interval
@@ -125,10 +137,9 @@ class UserPreferences: ObservableObject {
             UserPreferences.defaults.set(intervalData, forKey: PreferencesKeys.upcomingRemindersInterval)
         }
     }
-    
-    @Published var filterUpcomingRemindersByCalendar: Bool = {
-        return defaults.bool(forKey: PreferencesKeys.filterUpcomingRemindersByCalendar)
-    }() {
+
+    @Published var filterUpcomingRemindersByCalendar: Bool = defaults
+    .bool(forKey: PreferencesKeys.filterUpcomingRemindersByCalendar) {
         didSet {
             UserPreferences.defaults.set(
                 filterUpcomingRemindersByCalendar,
@@ -136,22 +147,20 @@ class UserPreferences: ObservableObject {
             )
         }
     }
-    
-    @Published var showUpcomingReminders: Bool = {
-        return defaults.boolWithDefaultValueTrue(forKey: PreferencesKeys.showUpcomingReminders)
-    }() {
+
+    @Published var showUpcomingReminders: Bool = defaults
+    .boolWithDefaultValueTrue(forKey: PreferencesKeys.showUpcomingReminders) {
         didSet {
             UserPreferences.defaults.set(showUpcomingReminders, forKey: PreferencesKeys.showUpcomingReminders)
         }
     }
-    
+
     var atLeastOneFilterIsSelected: Bool {
-        return
-            showUpcomingReminders ||
+        showUpcomingReminders ||
             preferredCalendarIdentifiersFilter == nil ||
             !(preferredCalendarIdentifiersFilter ?? []).isEmpty
     }
-    
+
     var launchAtLoginIsEnabled: Bool {
         get {
             if #available(macOS 13.0, *) {
@@ -178,7 +187,7 @@ class UserPreferences: ObservableObject {
             UserPreferences.defaults.set(newValue, forKey: "launchAtLoginCached")
         }
     }
-    
+
     @Published var rmbColorScheme: RmbColorScheme = {
         guard let rmbColorSchemeString = defaults.string(forKey: PreferencesKeys.rmbColorScheme) else {
             return .system
@@ -189,18 +198,18 @@ class UserPreferences: ObservableObject {
             UserPreferences.defaults.set(rmbColorScheme.rawValue, forKey: PreferencesKeys.rmbColorScheme)
         }
     }
-    
-    @Published var backgroundIsTransparent: Bool = {
-        return defaults.boolWithDefaultValueTrue(forKey: PreferencesKeys.backgroundIsTransparent)
-    }() {
+
+    @Published var backgroundIsTransparent: Bool = defaults
+    .boolWithDefaultValueTrue(forKey: PreferencesKeys.backgroundIsTransparent) {
         didSet {
             UserPreferences.defaults.set(backgroundIsTransparent, forKey: PreferencesKeys.backgroundIsTransparent)
         }
     }
-    
+
     @Published var menuBarCounterType: RmbMenuBarCounterType = {
         guard let counterTypeData = defaults.data(forKey: PreferencesKeys.menuBarCounterType),
-              let counterType = try? JSONDecoder().decode(RmbMenuBarCounterType.self, from: counterTypeData) else {
+              let counterType = try? JSONDecoder().decode(RmbMenuBarCounterType.self, from: counterTypeData)
+        else {
             return .today
         }
         return counterType
@@ -210,10 +219,9 @@ class UserPreferences: ObservableObject {
             UserPreferences.defaults.set(counterTypeData, forKey: PreferencesKeys.menuBarCounterType)
         }
     }
-    
-    @Published var filterMenuBarCountByCalendar: Bool = {
-        return defaults.bool(forKey: PreferencesKeys.filterMenuBarCountByCalendar)
-    }() {
+
+    @Published var filterMenuBarCountByCalendar: Bool = defaults
+    .bool(forKey: PreferencesKeys.filterMenuBarCountByCalendar) {
         didSet {
             UserPreferences.defaults.set(
                 filterMenuBarCountByCalendar,
@@ -221,28 +229,24 @@ class UserPreferences: ObservableObject {
             )
         }
     }
-    
-    @Published var preferredLanguage: String? = {
-        return defaults.string(forKey: PreferencesKeys.preferredLanguage)
-    }() {
+
+    @Published var preferredLanguage: String? = defaults.string(forKey: PreferencesKeys.preferredLanguage) {
         didSet {
             UserPreferences.defaults.set(preferredLanguage, forKey: PreferencesKeys.preferredLanguage)
         }
     }
 
     // MARK: - Sync Summary
-    @Published var lastSyncSummary: String? = {
-        return defaults.string(forKey: PreferencesKeys.lastSyncSummary)
-    }() {
+
+    @Published var lastSyncSummary: String? = defaults.string(forKey: PreferencesKeys.lastSyncSummary) {
         didSet {
             UserPreferences.defaults.set(lastSyncSummary, forKey: PreferencesKeys.lastSyncSummary)
         }
     }
 
     // MARK: - Authentication / Session
-    @Published var staySignedIn: Bool = {
-        return defaults.bool(forKey: PreferencesKeys.staySignedIn)
-    }() {
+
+    @Published var staySignedIn: Bool = defaults.bool(forKey: PreferencesKeys.staySignedIn) {
         didSet {
             UserPreferences.defaults.set(staySignedIn, forKey: PreferencesKeys.staySignedIn)
         }
@@ -296,9 +300,8 @@ class UserPreferences: ObservableObject {
     }
 
     // MARK: - Background Sync
-    @Published var enableBackgroundSync: Bool = {
-        return defaults.bool(forKey: PreferencesKeys.enableBackgroundSync)
-    }() {
+
+    @Published var enableBackgroundSync: Bool = defaults.bool(forKey: PreferencesKeys.enableBackgroundSync) {
         didSet { UserPreferences.defaults.set(enableBackgroundSync, forKey: PreferencesKeys.enableBackgroundSync) }
     }
 
@@ -315,9 +318,8 @@ class UserPreferences: ObservableObject {
     }
 
     // MARK: - Sync Behavior
-    @Published var syncDryRun: Bool = {
-        return defaults.bool(forKey: PreferencesKeys.syncDryRun)
-    }() {
+
+    @Published var syncDryRun: Bool = defaults.bool(forKey: PreferencesKeys.syncDryRun) {
         didSet { UserPreferences.defaults.set(syncDryRun, forKey: PreferencesKeys.syncDryRun) }
     }
 
@@ -332,17 +334,29 @@ class UserPreferences: ObservableObject {
         }
     }
 
-    // MARK: - Theme→Calendar mapping
-    @Published var themeCalendarMap: [String: String] = {
-        return defaults.dictionary(forKey: PreferencesKeys.themeCalendarMap) as? [String: String] ?? [:]
+    @Published var metadataDetailLevel: MetadataDetailLevel = {
+        if let raw = defaults.string(forKey: PreferencesKeys.metadataDetailLevel),
+           let level = MetadataDetailLevel(rawValue: raw) {
+            return level
+        }
+        return .full
     }() {
+        didSet {
+            UserPreferences.defaults.set(metadataDetailLevel.rawValue, forKey: PreferencesKeys.metadataDetailLevel)
+        }
+    }
+
+    // MARK: - Theme→Calendar mapping
+
+    @Published var themeCalendarMap: [String: String] = defaults
+    .dictionary(forKey: PreferencesKeys.themeCalendarMap) as? [String: String] ?? [:] {
         didSet { UserPreferences.defaults.set(themeCalendarMap, forKey: PreferencesKeys.themeCalendarMap) }
     }
 
     // MARK: - Triage Classification
-    @Published var enableTriageClassification: Bool = {
-        return defaults.bool(forKey: PreferencesKeys.enableTriageClassification)
-    }() {
+
+    @Published var enableTriageClassification: Bool = defaults
+    .bool(forKey: PreferencesKeys.enableTriageClassification) {
         didSet {
             UserPreferences.defaults.set(
                 enableTriageClassification,
@@ -352,23 +366,17 @@ class UserPreferences: ObservableObject {
     }
 
     // Optional: list names. If empty, classification is skipped.
-    @Published var triageCalendarName: String? = {
-        return defaults.string(forKey: PreferencesKeys.triageCalendarName)
-    }() {
+    @Published var triageCalendarName: String? = defaults.string(forKey: PreferencesKeys.triageCalendarName) {
         didSet { UserPreferences.defaults.set(triageCalendarName, forKey: PreferencesKeys.triageCalendarName) }
     }
 
-    @Published var workCalendarName: String? = {
-        return defaults.string(forKey: PreferencesKeys.workCalendarName)
-    }() {
+    @Published var workCalendarName: String? = defaults.string(forKey: PreferencesKeys.workCalendarName) {
         didSet { UserPreferences.defaults.set(workCalendarName, forKey: PreferencesKeys.workCalendarName) }
     }
 
     // Optional: external HTTP endpoint for LLM classification.
     // Expected to accept JSON and return { persona: "work"|"personal", confidence: Number }
-    @Published var llmTriageEndpoint: String? = {
-        return defaults.string(forKey: PreferencesKeys.llmTriageEndpoint)
-    }() {
+    @Published var llmTriageEndpoint: String? = defaults.string(forKey: PreferencesKeys.llmTriageEndpoint) {
         didSet { UserPreferences.defaults.set(llmTriageEndpoint, forKey: PreferencesKeys.llmTriageEndpoint) }
     }
 }

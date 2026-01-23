@@ -1,9 +1,9 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct ReminderChangeListOptionMenu: View {
     @EnvironmentObject var remindersData: RemindersData
-    
+
     var reminder: EKReminder
     var reminderHasChildren: Bool
 

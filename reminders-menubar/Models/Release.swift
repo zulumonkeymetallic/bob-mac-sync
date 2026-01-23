@@ -2,7 +2,7 @@ import Foundation
 
 struct Release: Decodable {
     let version: String
-    
+
     enum CodingKeys: String, CodingKey {
         case version = "tag_name"
     }
@@ -10,14 +10,14 @@ struct Release: Decodable {
 
 extension Release {
     static func == (lhs: Release, rhs: Release) -> Bool {
-        return lhs.version.compare(rhs.version, options: .numeric) == .orderedSame
+        lhs.version.compare(rhs.version, options: .numeric) == .orderedSame
     }
-    
+
     static func < (lhs: Release, rhs: Release) -> Bool {
-        return lhs.version.compare(rhs.version, options: .numeric) == .orderedAscending
+        lhs.version.compare(rhs.version, options: .numeric) == .orderedAscending
     }
-    
+
     static func > (lhs: Release, rhs: Release) -> Bool {
-        return lhs.version.compare(rhs.version, options: .numeric) == .orderedDescending
+        lhs.version.compare(rhs.version, options: .numeric) == .orderedDescending
     }
 }

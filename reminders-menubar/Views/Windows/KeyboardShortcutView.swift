@@ -1,14 +1,14 @@
-import SwiftUI
 import KeyboardShortcuts
+import SwiftUI
 
 struct KeyboardShortcutView: View {
     @ObservedObject var keyboardShortcutService = KeyboardShortcutService.shared
-    
+
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 8) {
                 Spacer()
-                
+
                 VStack(alignment: .leading, spacing: 16) {
                     Toggle(
                         rmbLocalized(.keyboardShortcutEnableSyncShortcutOption),
@@ -31,7 +31,7 @@ struct KeyboardShortcutView: View {
                     .padding(.leading, 20)
                     .disabled(!keyboardShortcutService.isRunBobSyncEnabled)
                 }
-                
+
                 Spacer()
             }
         }
@@ -40,18 +40,18 @@ struct KeyboardShortcutView: View {
         .padding(.horizontal, 32)
         .frame(width: 520, height: 180)
     }
-    
+
     static func showWindow() {
         let viewController = NSHostingController(rootView: KeyboardShortcutView())
         let windowController = NSWindowController(window: NSWindow(contentViewController: viewController))
-        
+
         if let window = windowController.window {
             window.title = rmbLocalized(.keyboardShortcutWindowTitle)
             window.titlebarAppearsTransparent = true
             window.animationBehavior = .alertPanel
             window.styleMask = [.titled, .closable]
         }
-        
+
         windowController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

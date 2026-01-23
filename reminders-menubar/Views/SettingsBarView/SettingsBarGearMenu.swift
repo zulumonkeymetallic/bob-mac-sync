@@ -4,13 +4,13 @@ struct SettingsBarGearMenu: View {
     @EnvironmentObject var remindersData: RemindersData
     @ObservedObject var userPreferences = UserPreferences.shared
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    
+
     @State var gearIsHovered = false
-    
+
     @ObservedObject var appUpdateCheckHelper = AppUpdateCheckHelper.shared
     @ObservedObject var keyboardShortcutService = KeyboardShortcutService.shared
     @ObservedObject var manualSyncService = ManualSyncService.shared
-    
+
     var body: some View {
         Menu {
             VStack {
@@ -54,12 +54,26 @@ struct SettingsBarGearMenu: View {
                     )
                 }
 
+                Menu("Metadata Detail") {
+                    ForEach(MetadataDetailLevel.allCases) { level in
+                        Button(action: {
+                            userPreferences.metadataDetailLevel = level
+                        }) {
+                            SelectableView(
+                                title: level.displayName,
+                                isSelected: userPreferences.metadataDetailLevel == level,
+                                withPadding: false
+                            )
+                        }
+                    }
+                }
+
                 visualCustomizationOptions()
 
                 // Bob Auth & Sync
                 Menu {
                     Button("Sync with Bob") { ManualSyncService.shared.trigger(reason: "Settings Menu") }
-                    .disabled(manualSyncService.isSyncing)
+                        .disabled(manualSyncService.isSyncing)
                     Button("Open Sync Log") {
                         SyncLogService.shared.revealLogInFinder()
                     }
@@ -72,15 +86,22 @@ struct SettingsBarGearMenu: View {
                         userPreferences.enableBackgroundSync.toggle()
                         BackgroundSyncService.shared.applyPreference()
                     }) {
-                        SelectableView(title: "Enable Background Sync", isSelected: userPreferences.enableBackgroundSync)
+                        SelectableView(
+                            title: "Enable Background Sync",
+                            isSelected: userPreferences.enableBackgroundSync
+                        )
                     }
                     Menu("Background Sync Interval") {
                         ForEach([15, 30, 60, 120, 240], id: \.self) { minutes in
                             Button(action: {
                                 userPreferences.backgroundSyncIntervalMinutes = minutes
-                                if userPreferences.enableBackgroundSync { BackgroundSyncService.shared.applyPreference() }
+                                if userPreferences
+                                    .enableBackgroundSync { BackgroundSyncService.shared.applyPreference() }
                             }) {
-                                SelectableView(title: "Every \(minutes) min", isSelected: userPreferences.backgroundSyncIntervalMinutes == minutes)
+                                SelectableView(
+                                    title: "Every \(minutes) min",
+                                    isSelected: userPreferences.backgroundSyncIntervalMinutes == minutes
+                                )
                             }
                         }
                     }
@@ -92,11 +113,15 @@ struct SettingsBarGearMenu: View {
                                 let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: false)
                                 if let err = res.error {
                                     SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                    await SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                                    await MainActor.run {
+                                        SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                                    }
                                 } else {
                                     let msg = "Completed \(res.deleted) duplicates across \(res.groups) groups"
                                     SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                    await SyncFeedbackService.shared.show(message: msg)
+                                    await MainActor.run {
+                                        SyncFeedbackService.shared.show(message: msg)
+                                    }
                                 }
                             }
                         }
@@ -105,11 +130,15 @@ struct SettingsBarGearMenu: View {
                                 let diag = await FirebaseSyncService.shared.diagnoseDuplicates()
                                 if let err = diag.error {
                                     SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                    await SyncFeedbackService.shared.show(message: "Diagnose error: \(err)")
+                                    await MainActor.run {
+                                        SyncFeedbackService.shared.show(message: "Diagnose error: \(err)")
+                                    }
                                 } else {
                                     let msg = "Diagnosed \(diag.processed) tasks, groups: key=\(diag.keyGroups) rid=\(diag.ridGroups)"
                                     SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                    await SyncFeedbackService.shared.show(message: msg)
+                                    await MainActor.run {
+                                        SyncFeedbackService.shared.show(message: msg)
+                                    }
                                 }
                             }
                         }
@@ -118,11 +147,15 @@ struct SettingsBarGearMenu: View {
                                 let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: true)
                                 if let err = res.error {
                                     SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                    await SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                                    await MainActor.run {
+                                        SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                                    }
                                 } else {
                                     let msg = "Deleted \(res.deleted) duplicates across \(res.groups) groups"
                                     SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                    await SyncFeedbackService.shared.show(message: msg)
+                                    await MainActor.run {
+                                        SyncFeedbackService.shared.show(message: msg)
+                                    }
                                 }
                             }
                         }
@@ -147,9 +180,8 @@ struct SettingsBarGearMenu: View {
                     let activeShortcutText = Text(verbatim: "     \(activeShortcut)").foregroundColor(.gray)
                     Text(rmbLocalized(.keyboardShortcutOptionButton)) + activeShortcutText
                 }
-                
-                Divider()
 
+                Divider()
 
                 Button(action: {
                     Task {
@@ -158,15 +190,15 @@ struct SettingsBarGearMenu: View {
                 }) {
                     Text(rmbLocalized(.reloadRemindersDataButton))
                 }
-                
+
                 Divider()
-                
+
                 Button(action: {
                     AboutView.showWindow()
                 }) {
                     Text(rmbLocalized(.appAboutButton))
                 }
-                
+
                 Button(action: {
                     NSApplication.shared.terminate(self)
                 }) {
@@ -186,22 +218,22 @@ struct SettingsBarGearMenu: View {
         }
         .help(rmbLocalized(.settingsButtonHelp))
     }
-    
+
     @ViewBuilder
     func visualCustomizationOptions() -> some View {
         Divider()
-        
+
         appAppearanceMenu()
-        
+
         menuBarIconMenu()
-        
+
         menuBarCounterMenu()
-        
+
         preferredLanguageMenu()
-        
+
         Divider()
     }
-    
+
     func appAppearanceMenu() -> some View {
         Menu {
             ForEach(RmbColorScheme.allCases, id: \.rawValue) { colorScheme in
@@ -210,12 +242,12 @@ struct SettingsBarGearMenu: View {
                     SelectableView(title: colorScheme.title, isSelected: isSelected)
                 }
             }
-            
+
             Divider()
-            
+
             let isIncreasedContrastEnabled = colorSchemeContrast == .increased
             let isTransparencyEnabled = userPreferences.backgroundIsTransparent && !isIncreasedContrastEnabled
-            
+
             Button(action: {
                 userPreferences.backgroundIsTransparent = false
             }) {
@@ -226,7 +258,7 @@ struct SettingsBarGearMenu: View {
                 )
             }
             .disabled(isIncreasedContrastEnabled)
-            
+
             Button(action: {
                 userPreferences.backgroundIsTransparent = true
             }) {
@@ -241,7 +273,7 @@ struct SettingsBarGearMenu: View {
             Text(rmbLocalized(.appAppearanceMenu))
         }
     }
-    
+
     func menuBarIconMenu() -> some View {
         Menu {
             ForEach(RmbIcon.allCases, id: \.self) { icon in
@@ -257,7 +289,7 @@ struct SettingsBarGearMenu: View {
             Text(rmbLocalized(.menuBarIconSettingsMenu))
         }
     }
-    
+
     func menuBarCounterMenu() -> some View {
         Menu {
             ForEach(RmbMenuBarCounterType.allCases, id: \.rawValue) { counterType in
@@ -266,9 +298,9 @@ struct SettingsBarGearMenu: View {
                     SelectableView(title: counterType.title, isSelected: isSelected)
                 }
             }
-            
+
             Divider()
-            
+
             Button(action: {
                 userPreferences.filterMenuBarCountByCalendar.toggle()
             }) {
@@ -281,7 +313,7 @@ struct SettingsBarGearMenu: View {
             Text(rmbLocalized(.menuBarCounterSettingsMenu))
         }
     }
-    
+
     func preferredLanguageMenu() -> some View {
         Menu {
             Button(action: {
@@ -293,9 +325,9 @@ struct SettingsBarGearMenu: View {
                     isSelected: isSelected
                 )
             }
-            
+
             Divider()
-                            
+
             ForEach(rmbAvailableLocales(), id: \.identifier) { locale in
                 let localeIdentifier = locale.identifier
                 Button(action: {

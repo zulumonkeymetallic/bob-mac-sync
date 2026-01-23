@@ -5,13 +5,13 @@ import os.log
 import AppKit
 #endif
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
-import FirebaseFirestore
 import FirebaseAuth
+import FirebaseFirestore
 #endif
 
 class SyncLogService {
     static let shared = SyncLogService()
-    
+
     private init() {}
 
     enum SyncDirection: String {
@@ -209,7 +209,10 @@ class SyncLogService {
 
     func openLogsFolder() {
         guard let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
-        let logsDir = lib.appendingPathComponent("Logs").appendingPathComponent("RemindersMenuBar", isDirectory: true)
+        let logsDir = lib.appendingPathComponent("Logs").appendingPathComponent(
+            "RemindersMenuBar",
+            isDirectory: true
+        )
         NSWorkspace.shared.open(logsDir)
         NSApp.activate(ignoringOtherApps: true)
     }

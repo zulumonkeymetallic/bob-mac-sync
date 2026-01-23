@@ -1,5 +1,5 @@
-import Foundation
 import EventKit
+import Foundation
 
 // Lightweight, pluggable classifier that can route triage items to
 // personal vs work without blocking the main sync flow. It first tries
@@ -42,7 +42,8 @@ actor TriageClassifierService {
         }
 
         // Try the configured endpoint first, if present
-        if let endpointString = await MainActor.run({ UserPreferences.shared.llmTriageEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines) }),
+        if let endpointString = await MainActor
+            .run({ UserPreferences.shared.llmTriageEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines) }),
            let url = URL(string: endpointString), !endpointString.isEmpty {
             if let result = await classifyViaHTTP(url: url, title: title, notes: notes, tags: tags) {
                 return result
@@ -54,7 +55,13 @@ actor TriageClassifierService {
     }
 
     // MARK: - HTTP endpoint integration
-    private func classifyViaHTTP(url: URL, title: String, notes: String?, tags: [String]) async -> TriageClassification? {
+
+    private func classifyViaHTTP(
+        url: URL,
+        title: String,
+        notes: String?,
+        tags: [String]
+    ) async -> TriageClassification? {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -71,14 +78,11 @@ actor TriageClassifierService {
         let session = URLSession(configuration: config)
         do {
             let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { return nil }
+            guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else { return nil }
             guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
             let rawPersona = (obj["persona"] as? String)?.lowercased()
             let confidence = (obj["confidence"] as? NSNumber)?.doubleValue ?? 0.0
-            let persona: TriagePersona
-            if rawPersona == "work" { persona = .work }
-            else if rawPersona == "personal" { persona = .personal }
-            else { persona = .unknown }
+            let persona: TriagePersona = if rawPersona == "work" { .work } else if rawPersona == "personal" { .personal } else { .unknown }
             // Optional theme hint if provided by endpoint
             let suggestedTheme = (obj["theme"] as? String) ?? (obj["suggestedTheme"] as? String)
             return .init(persona: persona, confidence: confidence, source: "llm", suggestedTheme: suggestedTheme)
@@ -89,6 +93,7 @@ actor TriageClassifierService {
     }
 
     // MARK: - Heuristic fallback
+
     private func classifyHeuristically(title: String, notes: String?, tags: [String]) -> TriageClassification {
         let text = "\(title)\n\(notes ?? "")".lowercased()
         let all = text + "\n" + tags.joined(separator: " ").lowercased()
@@ -135,7 +140,7 @@ actor TriageClassifierService {
             confidence = personalScore / max(total, 1.0)
         }
 
-        var suggestedTheme: String? = nil
+        var suggestedTheme: String?
         if persona == .personal {
             suggestedTheme = suggestPersonalTheme(from: all)
         }

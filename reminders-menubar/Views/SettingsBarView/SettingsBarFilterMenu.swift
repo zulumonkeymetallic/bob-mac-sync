@@ -4,9 +4,9 @@ struct SettingsBarFilterMenu: View {
     @EnvironmentObject var remindersData: RemindersData
     @ObservedObject var userPreferences = UserPreferences.shared
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    
+
     @State var filterIsHovered = false
-    
+
     var body: some View {
         Menu {
             VStack {
@@ -16,9 +16,9 @@ struct SettingsBarFilterMenu: View {
                     let isSelected = userPreferences.showUpcomingReminders
                     SelectableView(title: rmbLocalized(.upcomingRemindersTitle), isSelected: isSelected)
                 }
-                
+
                 Divider()
-                
+
                 ForEach(remindersData.calendars, id: \.calendarIdentifier) { calendar in
                     let calendarIdentifier = calendar.calendarIdentifier
                     Button(action: {

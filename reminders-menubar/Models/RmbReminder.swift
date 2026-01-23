@@ -5,21 +5,21 @@ struct RmbReminder {
     private var isPreparingToSave = false
     private var isParsingEnabled = false
     private var isAutoSuggestingTodayForCreation = false
-    
+
     var hasDateChanges: Bool {
         guard let originalReminder else {
             return true
         }
-        
+
         return
             hasDueDate != originalReminder.hasDueDate ||
             hasTime != originalReminder.hasTime ||
             date != originalReminder.dueDateComponents?.date
     }
-    
+
     var title: String {
         willSet {
-            guard !isPreparingToSave && isParsingEnabled else {
+            guard !isPreparingToSave, isParsingEnabled else {
                 return
             }
             updateTextDateResult(with: newValue)
@@ -27,7 +27,7 @@ struct RmbReminder {
             updateTextPriorityResult(with: newValue)
         }
     }
-    
+
     var notes: String?
     var date: Date {
         didSet {
@@ -37,6 +37,7 @@ struct RmbReminder {
             isAutoSuggestingTodayForCreation = false
         }
     }
+
     var hasDueDate: Bool {
         didSet {
             // NOTE: When the hasDueDate option is disabled, it must disable hasTime
@@ -46,19 +47,21 @@ struct RmbReminder {
             }
         }
     }
+
     var hasTime: Bool {
         didSet {
             // NOTE: When enabling the option to add a time the suggestion will be the next hour of the current moment
             date = .nextExactHour(of: date)
         }
     }
+
     var priority: EKReminderPriority
     var calendar: EKCalendar?
-    
+
     var textDateResult = DateParser.TextDateResult()
     var textCalendarResult = CalendarParser.TextCalendarResult()
     var textPriorityResult = PriorityParser.PriorityParserResult()
-    
+
     var highlightedTexts: [RmbHighlightedTextField.HighlightedText] {
         [textDateResult.highlightedText, textCalendarResult.highlightedText, textPriorityResult.highlightedText]
     }
@@ -71,7 +74,7 @@ struct RmbReminder {
         priority = .none
         isParsingEnabled = true
     }
-    
+
     init(reminder: EKReminder) {
         originalReminder = reminder
         title = reminder.title
@@ -87,8 +90,8 @@ struct RmbReminder {
         guard !hasDueDate else {
             return
         }
-        self.hasDueDate = true
-        self.isAutoSuggestingTodayForCreation = true
+        hasDueDate = true
+        isAutoSuggestingTodayForCreation = true
     }
 
     mutating func updateSuggestedDate() {
@@ -98,18 +101,18 @@ struct RmbReminder {
     mutating func prepareToSave() {
         isPreparingToSave = true
     }
-    
+
     private mutating func updateTextDateResult(with newTitle: String) {
         if isAutoSuggestingTodayForCreation {
             updateTextDateResultTimeOnly(with: newTitle, isAutoSuggestingToday: true)
             return
         }
-        
+
         // NOTE: If a date was defined by the user then the DateParser should not be applied.
-        if hasDueDate && textDateResult.string.isEmpty {
+        if hasDueDate, textDateResult.string.isEmpty {
             return
         }
-        
+
         guard let dateResult = DateParser.shared.getDate(from: newTitle) else {
             hasDueDate = false
             hasTime = false
@@ -117,53 +120,53 @@ struct RmbReminder {
             textDateResult = DateParser.TextDateResult()
             return
         }
-        
+
         hasDueDate = true
         hasTime = dateResult.hasTime
         date = dateResult.date
         textDateResult = dateResult.textDateResult
     }
-    
+
     private mutating func updateTextDateResultTimeOnly(with newTitle: String, isAutoSuggestingToday: Bool) {
         // NOTE: If a time was defined by the user then the DateParser should not be applied.
-        if hasTime && textDateResult.string.isEmpty {
+        if hasTime, textDateResult.string.isEmpty {
             return
         }
-        
+
         guard let dateResult = DateParser.shared.getTimeOnly(from: newTitle, on: date) else {
             hasTime = false
             textDateResult = DateParser.TextDateResult()
             isAutoSuggestingTodayForCreation = isAutoSuggestingToday
             return
         }
-        
+
         hasTime = true
         date = dateResult.date
         textDateResult = dateResult.textDateResult
         isAutoSuggestingTodayForCreation = isAutoSuggestingToday
     }
-    
+
     private mutating func updateTextCalendarResult(with newTitle: String) {
         guard let calendarResult = CalendarParser.getCalendar(from: newTitle) else {
             textCalendarResult = CalendarParser.TextCalendarResult()
             return
         }
-        
+
         textCalendarResult = calendarResult
     }
-    
+
     private mutating func updateTextPriorityResult(with newTitle: String) {
         // NOTE: If a priority was defined by the user then the PriorityParser should not be applied.
-        if priority != .none && textPriorityResult.string.isEmpty {
+        if priority != .none, textPriorityResult.string.isEmpty {
             return
         }
-        
+
         guard let priorityResult = PriorityParser.getPriority(from: newTitle) else {
             textPriorityResult = PriorityParser.PriorityParserResult()
             priority = .none
             return
         }
-        
+
         priority = priorityResult.priority
         textPriorityResult = priorityResult
     }

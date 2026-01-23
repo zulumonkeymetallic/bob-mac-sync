@@ -5,7 +5,7 @@ struct PrioritizedReminders {
     let medium: [ReminderItem]
     let low: [ReminderItem]
     let none: [ReminderItem]
-    
+
     init(_ reminderItems: [ReminderItem]) {
         let remindersByPriority = Dictionary(grouping: reminderItems, by: { $0.reminder.ekPriority })
         high = remindersByPriority[.high] ?? []
