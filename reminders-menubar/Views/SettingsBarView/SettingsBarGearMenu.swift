@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct SettingsBarGearMenu: View {
@@ -6,8 +7,6 @@ struct SettingsBarGearMenu: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State var gearIsHovered = false
-    @State private var showStorySyncDisablePrompt = false
-
     @ObservedObject var appUpdateCheckHelper = AppUpdateCheckHelper.shared
     @ObservedObject var keyboardShortcutService = KeyboardShortcutService.shared
     @ObservedObject var manualSyncService = ManualSyncService.shared
@@ -108,7 +107,7 @@ struct SettingsBarGearMenu: View {
                     }
                     Button(action: {
                         if userPreferences.syncStories {
-                            showStorySyncDisablePrompt = true
+                            promptDisableStorySync()
                         } else {
                             userPreferences.syncStories = true
                         }
@@ -117,29 +116,6 @@ struct SettingsBarGearMenu: View {
                             title: "Sync Stories",
                             isSelected: userPreferences.syncStories
                         )
-                    }
-                    .confirmationDialog(
-                        "Turn off Story Sync?",
-                        isPresented: $showStorySyncDisablePrompt,
-                        titleVisibility: .visible
-                    ) {
-                        Button("Turn Off Only", role: .destructive) {
-                            userPreferences.syncStories = false
-                        }
-                        Button("Turn Off & Remove Story Reminders", role: .destructive) {
-                            userPreferences.syncStories = false
-                            Task {
-                                let result = await FirebaseSyncService.shared.removeStoryRemindersFromReminders()
-                                await MainActor.run {
-                                    SyncFeedbackService.shared.show(
-                                        message: "Removed \(result.removed) story reminders (skipped \(result.skipped))"
-                                    )
-                                }
-                            }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("Disabling story sync stops new story reminders. You can also remove existing story reminders from Reminders.")
                     }
                     Divider()
                     // Duplicate maintenance
@@ -375,6 +351,32 @@ struct SettingsBarGearMenu: View {
             }
         } label: {
             Text(rmbLocalized(.preferredLanguageMenu))
+        }
+    }
+
+    private func promptDisableStorySync() {
+        let alert = NSAlert()
+        alert.messageText = "Turn off Story Sync?"
+        alert.informativeText = "Disabling story sync stops new story reminders. You can also remove existing story reminders from Reminders."
+        alert.addButton(withTitle: "Turn Off Only")
+        alert.addButton(withTitle: "Turn Off & Remove Story Reminders")
+        alert.addButton(withTitle: "Cancel")
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            userPreferences.syncStories = false
+        case .alertSecondButtonReturn:
+            userPreferences.syncStories = false
+            Task {
+                let result = await FirebaseSyncService.shared.removeStoryRemindersFromReminders()
+                await MainActor.run {
+                    SyncFeedbackService.shared.show(
+                        message: "Removed \(result.removed) story reminders (skipped \(result.skipped))"
+                    )
+                }
+            }
+        default:
+            break
         }
     }
 }
