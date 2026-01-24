@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AppCommands: Commands {
@@ -26,7 +27,38 @@ struct AppCommands: Commands {
                 Text("Show Bob Metadata in Notes")
             }
 
-            Toggle(isOn: $prefs.syncStories) {
+            Toggle(isOn: Binding(
+                get: { prefs.syncStories },
+                set: { newValue in
+                    if newValue == false && prefs.syncStories {
+                        let alert = NSAlert()
+                        alert.messageText = "Turn off Story Sync?"
+                        alert.informativeText = "Existing story reminders can be removed from Reminders."
+                        alert.addButton(withTitle: "Turn Off Only")
+                        alert.addButton(withTitle: "Turn Off & Remove Story Reminders")
+                        alert.addButton(withTitle: "Cancel")
+                        let response = alert.runModal()
+                        switch response {
+                        case .alertFirstButtonReturn:
+                            prefs.syncStories = false
+                        case .alertSecondButtonReturn:
+                            prefs.syncStories = false
+                            Task {
+                                let result = await FirebaseSyncService.shared.removeStoryRemindersFromReminders()
+                                SyncLogService.shared.logEvent(
+                                    tag: "sync",
+                                    level: "INFO",
+                                    message: "Story reminders removed: \(result.removed) (skipped \(result.skipped))"
+                                )
+                            }
+                        default:
+                            break
+                        }
+                    } else {
+                        prefs.syncStories = newValue
+                    }
+                }
+            )) {
                 Text("Sync Stories")
             }
 

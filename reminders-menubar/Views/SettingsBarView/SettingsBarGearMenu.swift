@@ -6,6 +6,7 @@ struct SettingsBarGearMenu: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State var gearIsHovered = false
+    @State private var showStorySyncDisablePrompt = false
 
     @ObservedObject var appUpdateCheckHelper = AppUpdateCheckHelper.shared
     @ObservedObject var keyboardShortcutService = KeyboardShortcutService.shared
@@ -105,11 +106,40 @@ struct SettingsBarGearMenu: View {
                             }
                         }
                     }
-                    Button(action: { userPreferences.syncStories.toggle() }) {
+                    Button(action: {
+                        if userPreferences.syncStories {
+                            showStorySyncDisablePrompt = true
+                        } else {
+                            userPreferences.syncStories = true
+                        }
+                    }) {
                         SelectableView(
                             title: "Sync Stories",
                             isSelected: userPreferences.syncStories
                         )
+                    }
+                    .confirmationDialog(
+                        "Turn off Story Sync?",
+                        isPresented: $showStorySyncDisablePrompt,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Turn Off Only", role: .destructive) {
+                            userPreferences.syncStories = false
+                        }
+                        Button("Turn Off & Remove Story Reminders", role: .destructive) {
+                            userPreferences.syncStories = false
+                            Task {
+                                let result = await FirebaseSyncService.shared.removeStoryRemindersFromReminders()
+                                await MainActor.run {
+                                    SyncFeedbackService.shared.show(
+                                        message: "Removed \(result.removed) story reminders (skipped \(result.skipped))"
+                                    )
+                                }
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("Disabling story sync stops new story reminders. You can also remove existing story reminders from Reminders.")
                     }
                     Divider()
                     // Duplicate maintenance

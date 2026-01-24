@@ -655,6 +655,41 @@ actor FirebaseSyncService {
         return lines.joined(separator: "\n")
     }
 
+    func removeStoryRemindersFromReminders() async -> (removed: Int, skipped: Int) {
+        guard AppConstants.useNativeReminders else { return (0, 0) }
+        let hasAccess = await MainActor.run { RemindersService.shared.hasFullRemindersAccess() }
+        guard hasAccess else { return (0, 0) }
+
+        let calendars: [EKCalendar] = await MainActor.run { RemindersService.shared.getCalendars() }
+        let reminders = await RemindersService.shared.fetchReminders(in: calendars)
+        var removed = 0
+        var skipped = 0
+
+        for reminder in reminders {
+            let notes = await MainActor.run { reminder.notes }
+            let parsed = parseBobNote(notes: notes)
+            let source = parsed.meta["source"]?.lowercased() ?? ""
+            let type = parsed.meta["type"]?.lowercased() ?? ""
+            let hasStoryUrl = await MainActor.run { reminder.url?.absoluteString.lowercased().contains("bob.jc1.tech/stories/") ?? false }
+            let hasStoryRefWithoutTask = parsed.meta["storyRef"] != nil && parsed.meta["taskRef"] == nil
+            let isStoryOwned = source == "story_reminder" || type == "story" || hasStoryUrl || hasStoryRefWithoutTask
+
+            if isStoryOwned {
+                await MainActor.run { RemindersService.shared.remove(reminder: reminder) }
+                removed += 1
+            } else {
+                skipped += 1
+            }
+        }
+
+        SyncLogService.shared.logEvent(
+            tag: "sync",
+            level: "INFO",
+            message: "Removed \(removed) story reminders (skipped \(skipped))"
+        )
+        return (removed, skipped)
+    }
+
     private nonisolated func taskDeepLink(for taskRef: String) -> URL? {
         URL(string: "https://bob.jc1.tech/tasks/\(taskRef)")
     }
