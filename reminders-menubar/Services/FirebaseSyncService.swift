@@ -1137,6 +1137,7 @@ actor FirebaseSyncService {
                         "status": 2,
                         "updatedAt": FieldValue.serverTimestamp(),
                         "serverUpdatedAt": FieldValue.serverTimestamp(),
+                        "macSyncedAt": FieldValue.serverTimestamp(),
                         "reminderSyncDirective": "complete"
                     ]
                     let nowMs = Date().timeIntervalSince1970 * 1_000.0
@@ -1598,6 +1599,7 @@ actor FirebaseSyncService {
             "createdBy": "mac_app",
             "sourceClient": "MacApp",
             "serverUpdatedAt": FieldValue.serverTimestamp(),
+            "macSyncedAt": FieldValue.serverTimestamp(),
             "reminderListId": calendarIdentifier,
             "reminderListName": calendarTitle,
             "tags": reminderTags,
@@ -3027,6 +3029,7 @@ actor FirebaseSyncService {
                     batch.setData([
                         "updatedAt": FieldValue.serverTimestamp(),
                         "serverUpdatedAt": FieldValue.serverTimestamp(),
+                        "macSyncedAt": FieldValue.serverTimestamp(),
                         "reminderId": FieldValue.delete(),
                         "reminderListId": FieldValue.delete(),
                         "reminderListName": FieldValue.delete(),
@@ -3161,7 +3164,8 @@ actor FirebaseSyncService {
                             "reminderListId": MainActor.run { reminder.calendar.calendarIdentifier },
                             "reminderListName": MainActor.run { reminder.calendar.title },
                             "source": "MacApp",
-                            "serverUpdatedAt": FieldValue.serverTimestamp()
+                            "serverUpdatedAt": FieldValue.serverTimestamp(),
+                            "macSyncedAt": FieldValue.serverTimestamp()
                         ]
                         let titleLower = await MainActor.run { (reminder.title ?? "").lowercased() }
                         let calLower = await MainActor.run { reminder.calendar.title.lowercased() }
@@ -3297,6 +3301,7 @@ actor FirebaseSyncService {
                             "reminderListName": calName,
                             "source": "MacApp",
                             "serverUpdatedAt": FieldValue.serverTimestamp(),
+                            "macSyncedAt": FieldValue.serverTimestamp(),
                             // Help server-side diagnostics by storing a stable duplicateKey
                             "duplicateKey": "title:\(normTitle)"
                         ]
@@ -3762,6 +3767,7 @@ actor FirebaseSyncService {
                     let mappingPayload: [String: Any] = [
                         "updatedAt": FieldValue.serverTimestamp(),
                         "serverUpdatedAt": FieldValue.serverTimestamp(),
+                        "macSyncedAt": FieldValue.serverTimestamp(),
                         "reminderId": rid,
                         "reminderListId": cal.calendarIdentifier,
                         "reminderListName": cal.title,
@@ -4087,6 +4093,17 @@ actor FirebaseSyncService {
                         ],
                         dryRun: dryRun
                     )
+
+                    // Build change list for Activity stream visibility
+                    var storyChanges: [[String: Any]] = []
+                    func addStoryChange(_ field: String, _ oldVal: Any?, _ newVal: Any?) {
+                        let o = oldVal.map { String(describing: $0) } ?? ""
+                        let n = newVal.map { String(describing: $0) } ?? ""
+                        if o != n { storyChanges.append(["field": field, "old": o, "new": n]) }
+                    }
+                    addStoryChange("status", previousStatus, newStatusFromReminder ?? previousStatus)
+                    addStoryChange("tags", (matchedStory.tags as? [String]) ?? [], tagsForReminder)
+
                     if let newStatusFromReminder, !dryRun {
                         do {
                             try await db.collection("activity_stream").addDocument(data: [
@@ -4103,7 +4120,8 @@ actor FirebaseSyncService {
                                     "reminderId": rid,
                                     "previousStatus": previousStatus ?? "unknown",
                                     "newStatus": newStatusFromReminder,
-                                    "reminderCompleted": reminderCompleted
+                                    "reminderCompleted": reminderCompleted,
+                                    "changes": storyChanges
                                 ]
                             ])
                         } catch {
@@ -4404,6 +4422,7 @@ actor FirebaseSyncService {
 
                     // Bump serverUpdatedAt so delta filter (server clock) sees this change
                     pushData["serverUpdatedAt"] = FieldValue.serverTimestamp()
+                    pushData["macSyncedAt"] = FieldValue.serverTimestamp()
 
                     if !dryRun {
                         batch.setData(pushData, forDocument: ref, merge: true)
@@ -4432,6 +4451,28 @@ actor FirebaseSyncService {
                     if let sprintId = context.sprintId { logMeta["sprintId"] = sprintId }
                     if let theme = context.themeName { logMeta["theme"] = theme }
                     if let storyId = task.storyId { logMeta["storyId"] = storyId }
+
+                    // Build change list for activity stream
+                    var changeList: [[String: Any]] = []
+                    func addChange(_ field: String, _ oldVal: Any?, _ newVal: Any?) {
+                        let oldString = oldVal.map { String(describing: $0) } ?? ""
+                        let newString = newVal.map { String(describing: $0) } ?? ""
+                        if oldString != newString {
+                            changeList.append([
+                                "field": field,
+                                "old": oldString,
+                                "new": newString
+                            ])
+                        }
+                    }
+                    addChange("title", task.title, reminderTitle)
+                    addChange("status", task.status, reminderCompleted ? 2 : 0)
+                    addChange("dueDate", task.dueDate, reminderDueDate?.timeIntervalSince1970 ?? task.dueDate ?? 0)
+                    addChange("tags", task.tags, Array(tagList))
+
+                    // Also emit structured change list into sync detail log
+                    logMeta["changes"] = changeList
+
                     SyncLogService.shared.logSyncDetail(
                         direction: .toBob,
                         action: "updateFromReminder",
@@ -4440,6 +4481,34 @@ actor FirebaseSyncService {
                         metadata: logMeta,
                         dryRun: dryRun
                     )
+
+                    // Activity stream entry capturing field deltas
+                    if !dryRun, let db = FirebaseManager.shared.firestore, let user = Auth.auth().currentUser, !changeList.isEmpty {
+                        do {
+                            try await db.collection("activity_stream").addDocument(data: [
+                                "entityType": "task",
+                                "entityId": task.id,
+                                "activityType": "update_from_reminder",
+                                "ownerUid": user.uid,
+                                "userId": user.uid,
+                                "actor": "MacApp",
+                                "description": "Updated from reminder",
+                                "metadata": [
+                                    "changes": changeList,
+                                    "reminderId": rid,
+                                    "calendar": currentCalendarTitle
+                                ],
+                                "createdAt": FieldValue.serverTimestamp(),
+                                "updatedAt": FieldValue.serverTimestamp()
+                            ])
+                        } catch {
+                            SyncLogService.shared.logEvent(
+                                tag: "activity",
+                                level: "ERROR",
+                                message: "Failed to write update_from_reminder activity: \(error.localizedDescription)"
+                            )
+                        }
+                    }
                     mergesToBob += 1
 
                     meta["status"] = reminderCompleted ? "complete" : "open"
@@ -4575,7 +4644,8 @@ actor FirebaseSyncService {
                                 "status": 2,
                                 "completedAt": nowMs,
                                 "deleteAfter": nowMs + completedTaskTTL,
-                                "serverUpdatedAt": FieldValue.serverTimestamp()
+                                "serverUpdatedAt": FieldValue.serverTimestamp(),
+                                "macSyncedAt": FieldValue.serverTimestamp()
                             ], forDocument: ref, merge: true)
                         }
                         var statusLog: [String: Any] = [
@@ -4717,6 +4787,20 @@ actor FirebaseSyncService {
                     }
                     detailMeta["calendar"] = movedCalendarName ?? resolvedCalendarInfo.name
                     if !task.tags.isEmpty { detailMeta["tags"] = task.tags }
+
+                    // Record change list for visibility (Bob -> Reminder)
+                    var changes: [[String: Any]] = []
+                    func addChange(_ field: String, _ oldVal: Any?, _ newVal: Any?) {
+                        let o = oldVal.map { String(describing: $0) } ?? ""
+                        let n = newVal.map { String(describing: $0) } ?? ""
+                        if o != n { changes.append(["field": field, "old": o, "new": n]) }
+                    }
+                    addChange("title", reminder.title, task.title)
+                    addChange("status", reminder.isCompleted, meta["status"])
+                    addChange("dueDate", reminderDueDate?.timeIntervalSince1970, task.dueDate)
+                    addChange("tags", reminder.rmbCurrentTags(), task.tags)
+                    if !changes.isEmpty { detailMeta["changes"] = changes }
+
                     SyncLogService.shared.logSyncDetail(
                         direction: .toReminders,
                         action: "updateReminderFromBob",
@@ -4725,6 +4809,31 @@ actor FirebaseSyncService {
                         metadata: detailMeta,
                         dryRun: dryRun
                     )
+
+                    // Activity stream entry for Bob -> Reminder updates
+                    if !dryRun, let db = FirebaseManager.shared.firestore, let user = Auth.auth().currentUser, let taskId = task.id as String? {
+                        do {
+                            try await db.collection("activity_stream").addDocument(data: [
+                                "entityType": "task",
+                                "entityId": taskId,
+                                "activityType": "update_to_reminder",
+                                "ownerUid": user.uid,
+                                "userId": user.uid,
+                                "actor": "MacApp",
+                                "description": "Synced to reminder",
+                                "metadata": detailMeta,
+                                "createdAt": FieldValue.serverTimestamp(),
+                                "updatedAt": FieldValue.serverTimestamp()
+                            ])
+                        } catch {
+                            SyncLogService.shared.logEvent(
+                                tag: "activity",
+                                level: "ERROR",
+                                message: "Failed to write update_to_reminder activity: \ (error.localizedDescription)"
+                            )
+                        }
+                    }
+
                     updatesFromBob += 1
                     // Keep reminder URL pointing at Bob task
                     if !dryRun {
@@ -4944,6 +5053,7 @@ actor FirebaseSyncService {
                             "reminderId": FieldValue.delete(),
                             "reminderMissingAt": FieldValue.serverTimestamp(),
                             "serverUpdatedAt": FieldValue.serverTimestamp(),
+                            "macSyncedAt": FieldValue.serverTimestamp(),
                             "status": -1,
                             "completedAt": nowMs,
                             "deleteAfter": nowMs + completedTaskTTL
@@ -5450,7 +5560,14 @@ actor FirebaseSyncService {
 
     private func isDone(_ status: Any?) -> Bool {
         if let numberStatus = status as? NSNumber { return numberStatus.intValue == 2 }
-        if let stringStatus = status as? String { return stringStatus.lowercased() == "done" || stringStatus == "2"
+        if let stringStatus = status as? String {
+            let lowered = stringStatus.lowercased()
+            return lowered == "done" ||
+                lowered == "complete" ||
+                lowered == "completed" ||
+                lowered == "closed" ||
+                lowered == "resolved" ||
+                lowered == "2"
         }
         return false
     }
