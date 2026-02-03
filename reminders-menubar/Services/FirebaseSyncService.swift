@@ -3164,6 +3164,7 @@ actor FirebaseSyncService {
 
             for reminder in remindersNeedingImport {
                 do {
+                    var personaOverride: String? = nil
                     // Pre-import dedupe: try to link to existing task instead of creating a new one
                     let rid = await MainActor.run { reminder.calendarItemIdentifier }
                     let notes = await MainActor.run { reminder.notes }
