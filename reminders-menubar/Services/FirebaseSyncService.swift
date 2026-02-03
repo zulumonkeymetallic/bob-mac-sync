@@ -4293,6 +4293,17 @@ actor FirebaseSyncService {
                 hasStoryUrl ||
                 isStoryReminderId
 
+            // Always ensure task reminders carry a Bob deep link even when metadata is disabled.
+            if !dryRun, !isStoryOwnedReminder {
+                let linkURL = taskDeepLink(for: taskRefValue)
+                await MainActor.run {
+                    if let url = linkURL, reminder.url != url {
+                        reminder.url = url
+                        RemindersService.shared.save(reminder: reminder)
+                    }
+                }
+            }
+
             let reminderIsNewer = reminderEffectiveUpdated > bobUpdated
             let bobIsNewer = bobUpdated > reminderEffectiveUpdated
             let isBobFocus = task.aiFlaggedTop == true || (task.aiPriorityRank ?? 99) <= 5
