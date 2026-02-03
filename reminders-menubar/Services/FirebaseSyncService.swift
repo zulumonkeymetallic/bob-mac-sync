@@ -224,6 +224,36 @@ actor FirebaseSyncService {
         )
     }
 
+    private func containsWorkToken(_ value: String) -> Bool {
+        let lowered = value.lowercased()
+        if lowered.contains("workout") { return false }
+        let tokens = lowered.split { !$0.isLetter && !$0.isNumber }
+        if tokens.contains("work") { return true }
+        return lowered.contains("work")
+    }
+
+    private func resolveReminderPersona(
+        listName: String,
+        tags: [String],
+        workListName: String
+    ) -> String {
+        if !workListName.isEmpty,
+           listName.caseInsensitiveCompare(workListName) == .orderedSame {
+            return "work"
+        }
+        let normalizedTags = tags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if normalizedTags.contains("work") || normalizedTags.contains("#work") {
+            return "work"
+        }
+        if normalizedTags.contains(where: { containsWorkToken($0) }) {
+            return "work"
+        }
+        if containsWorkToken(listName) {
+            return "work"
+        }
+        return "personal"
+    }
+
     private func inferItemType(
         calendarTitle: String,
         tags: [String],
@@ -1547,7 +1577,8 @@ actor FirebaseSyncService {
         ownerUid: String,
         db: Firestore,
         dryRun: Bool,
-        batch: WriteBatch? = nil
+        batch: WriteBatch? = nil,
+        personaOverride: String? = nil
     ) async throws -> FbTask {
         let title = await MainActor.run { sanitizeTitle(reminder.title) }
         let reminderIdentifier = await MainActor.run { reminder.calendarItemIdentifier }
@@ -1572,6 +1603,14 @@ actor FirebaseSyncService {
                 return trimmed.isEmpty ? nil : trimmed
             }
         }
+        let workListName = await MainActor.run {
+            UserPreferences.shared.workCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
+        let personaValue = personaOverride ?? resolveReminderPersona(
+            listName: calendarTitle,
+            tags: reminderTags,
+            workListName: workListName
+        )
         let inferredType = inferItemType(
             calendarTitle: calendarTitle,
             tags: reminderTags,
@@ -1594,7 +1633,7 @@ actor FirebaseSyncService {
             "createdAt": FieldValue.serverTimestamp(),
             "updatedAt": FieldValue.serverTimestamp(),
             // Align with Bob schema and filters
-            "persona": "personal",
+            "persona": personaValue,
             "source": "MacApp",
             "createdBy": "mac_app",
             "sourceClient": "MacApp",
@@ -2819,8 +2858,10 @@ actor FirebaseSyncService {
                     ) == nil { continue }
                 }
 
+                var personaOverride: String? = nil
+
                 // Optional triage classification + routing before import
-                // Goal: If in triage list and judged as work, move to Work list and skip Firestore import (personal-only)
+                // Goal: If in triage list and judged as work, move to Work list and import as work persona
                 let prefs = await MainActor.run { UserPreferences.shared }
                 let triageName = await MainActor
                     .run { prefs.triageCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
@@ -2851,28 +2892,21 @@ actor FirebaseSyncService {
                     }
                 }
 
-                // Never import items that already live in the configured Work list
+                // Work list or work-tagged items are imported as work persona (no longer skipped)
                 if !workListName.isEmpty,
                    reminderCalendarInfo.name.caseInsensitiveCompare(workListName) == .orderedSame {
                     let titleForLog = await MainActor.run { reminder.title ?? "(untitled)" }
-                    let msg = "Skipping Firestore import for work item in ‘\(workListName)’: \(titleForLog)"
+                    let msg = "Importing work list item as work persona: \(titleForLog)"
                     SyncLogService.shared.logEvent(tag: "triage", level: "INFO", message: msg)
-                    await stripMetadataIfHidden()
-                    continue
-                }
-
-                // Also never import items explicitly tagged as "work" in Bob note metadata
-                do {
+                } else {
                     let tags = await MainActor.run { reminder.rmbCurrentTags().map { $0.lowercased() } }
                     if tags.contains("work") {
                         let titleForLog = await MainActor.run { reminder.title ?? "(untitled)" }
                         SyncLogService.shared.logEvent(
                             tag: "triage",
                             level: "INFO",
-                            message: "Skipping Firestore import for work-tagged item: \(titleForLog)"
+                            message: "Importing work-tagged item as work persona: \(titleForLog)"
                         )
-                        await stripMetadataIfHidden()
-                        continue
                     }
                 }
 
@@ -2886,7 +2920,7 @@ actor FirebaseSyncService {
 
                     switch result.persona {
                     case .work:
-                        // Move to work list (if configured) and tag as work, then skip import
+                        // Move to work list (if configured) and tag as work; import as work persona
                         var moved = false
                         if !workListName.isEmpty {
                             let target: EKCalendar? = await MainActor
@@ -2915,17 +2949,6 @@ actor FirebaseSyncService {
                             }
                         }
                         let moveMsg = moved ? "moved to ‘\(workListName)’" : "left in triage (no work list configured)"
-                        // Record skip for diagnostics list
-                        let diagTitle = await MainActor.run { reminder.title ?? "" }
-                        let diagTags = await MainActor.run { reminder.rmbCurrentTags() }
-                        let diagDue = await MainActor.run { reminder.dueDateComponents?.date }
-                        skippedImports.append(SkippedItem(
-                            title: diagTitle,
-                            reason: "triage_work",
-                            calendar: reminderCalendarInfo.name,
-                            tags: diagTags,
-                            due: diagDue
-                        ))
                         let msg = String(
                             format: "Classified as WORK (%.2f) – %@: %@",
                             result.confidence,
@@ -2937,8 +2960,7 @@ actor FirebaseSyncService {
                             level: "INFO",
                             message: msg
                         )
-                        await stripMetadataIfHidden()
-                        continue
+                        personaOverride = "work"
                     case .personal:
                         // Allow normal import path; optionally tag for visibility and theme
                         var tagsChanged = false
@@ -3292,6 +3314,14 @@ actor FirebaseSyncService {
                     if let candidate = taskByNormalizedTitleOldest[normTitle] {
                         let calId = await MainActor.run { reminder.calendar.calendarIdentifier }
                         let calName = await MainActor.run { reminder.calendar.title }
+                        let workListName = await MainActor.run {
+                            UserPreferences.shared.workCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        }
+                        let personaValue = personaOverride ?? resolveReminderPersona(
+                            listName: calName,
+                            tags: reminderTags,
+                            workListName: workListName
+                        )
                         var data: [String: Any] = await [
                             "reminderId": rid,
                             "updatedAt": FieldValue.serverTimestamp(),
@@ -3299,6 +3329,7 @@ actor FirebaseSyncService {
                             "title": MainActor.run { reminder.title ?? "" },
                             "reminderListId": calId,
                             "reminderListName": calName,
+                            "persona": personaValue,
                             "source": "MacApp",
                             "serverUpdatedAt": FieldValue.serverTimestamp(),
                             "macSyncedAt": FieldValue.serverTimestamp(),
@@ -3334,7 +3365,8 @@ actor FirebaseSyncService {
                         ownerUid: user.uid,
                         db: db,
                         dryRun: dryRun,
-                        batch: batch
+                        batch: batch,
+                        personaOverride: personaOverride
                     )
                     if !dryRun {
                         existingTaskIds.insert(imported.id)
@@ -4049,12 +4081,22 @@ actor FirebaseSyncService {
                         }
                     }
 
+                    let workListName = await MainActor.run {
+                        UserPreferences.shared.workCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    }
+                    let personaValue = resolveReminderPersona(
+                        listName: await MainActor.run { reminder.calendar.title },
+                        tags: reminderTags,
+                        workListName: workListName
+                    )
+
                     var data: [String: Any] = [
                         "updatedAt": FieldValue.serverTimestamp(),
                         "serverUpdatedAt": FieldValue.serverTimestamp(),
                         "reminderId": rid,
                         "reminderListId": await MainActor.run { reminder.calendar.calendarIdentifier },
                         "reminderListName": await MainActor.run { reminder.calendar.title },
+                        "persona": personaValue,
                         "source": "MacApp"
                     ]
                     if let sprintName { data["sprintName"] = sprintName }
@@ -4097,9 +4139,9 @@ actor FirebaseSyncService {
                     // Build change list for Activity stream visibility
                     var storyChanges: [[String: Any]] = []
                     func addStoryChange(_ field: String, _ oldVal: Any?, _ newVal: Any?) {
-                        let o = oldVal.map { String(describing: $0) } ?? ""
-                        let n = newVal.map { String(describing: $0) } ?? ""
-                        if o != n { storyChanges.append(["field": field, "old": o, "new": n]) }
+                        let oldValue = oldVal.map { String(describing: $0) } ?? ""
+                        let newValue = newVal.map { String(describing: $0) } ?? ""
+                        if oldValue != newValue { storyChanges.append(["field": field, "old": oldValue, "new": newValue]) }
                     }
                     addStoryChange("status", previousStatus, newStatusFromReminder ?? previousStatus)
                     addStoryChange("tags", (matchedStory.tags as? [String]) ?? [], tagsForReminder)
@@ -4137,42 +4179,6 @@ actor FirebaseSyncService {
                     continue
                 }
                 guard let matchedTask = taskByReminderIdLatest[rid] else { continue }
-                // Skip pushing to Bob when reminder is in configured Work list or explicitly tagged as work
-                do {
-                    let prefs = await MainActor.run { UserPreferences.shared }
-                    let workListName = await MainActor
-                        .run { prefs.workCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
-                    let calName = await MainActor.run { reminder.calendar.title }
-                    if !workListName.isEmpty, calName.caseInsensitiveCompare(workListName) == .orderedSame {
-                        let tagList = await MainActor.run { reminder.rmbCurrentTags() }
-                        let due = await MainActor.run { reminder.dueDateComponents?.date }
-                        let titleText = await MainActor.run { sanitizeTitle(reminder.title) }
-                        skippedMerges.append(SkippedItem(
-                            title: titleText,
-                            reason: "work_list",
-                            calendar: calName,
-                            tags: tagList,
-                            due: due
-                        ))
-                        await stripMetadataIfHidden()
-                        continue
-                    }
-                    let tags = await MainActor.run { reminder.rmbCurrentTags().map { $0.lowercased() } }
-                    if tags.contains("work") {
-                        let tagList = await MainActor.run { reminder.rmbCurrentTags() }
-                        let due = await MainActor.run { reminder.dueDateComponents?.date }
-                        let titleText = await MainActor.run { sanitizeTitle(reminder.title) }
-                        skippedMerges.append(SkippedItem(
-                            title: titleText,
-                            reason: "work_tag",
-                            calendar: calName,
-                            tags: tagList,
-                            due: due
-                        ))
-                        await stripMetadataIfHidden()
-                        continue
-                    }
-                }
                 let notes = await MainActor.run { reminder.notes }
                 let parsed = parseBobNote(notes: notes)
                 let ref = db.collection("tasks").document(matchedTask.id)
@@ -4187,6 +4193,14 @@ actor FirebaseSyncService {
                         return trimmed.isEmpty ? nil : trimmed
                     }
                 }
+                let workListName = await MainActor.run {
+                    UserPreferences.shared.workCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                }
+                let personaValue = resolveReminderPersona(
+                    listName: calendarTitle,
+                    tags: reminderTags,
+                    workListName: workListName
+                )
 
                 let mergedTags: [String] = {
                     var set = Set(reminderTags)
@@ -4205,6 +4219,7 @@ actor FirebaseSyncService {
                     "status": completed ? 2 : 0,
                     "reminderListId": calendarIdentifier,
                     "reminderListName": calendarTitle,
+                    "persona": personaValue,
                     "tags": mergedTags
                 ]
                 if let dueDate {
@@ -4244,40 +4259,6 @@ actor FirebaseSyncService {
             // Pull updates from Firestore to Reminders for tasks that already have reminderId
             for task in tasks {
                 guard let rid = task.reminderId, let reminder = remindersById[rid] else { continue }
-                // Skip pulling from Bob when reminder is in configured Work list or explicitly tagged as work
-                do {
-                    let prefs = await MainActor.run { UserPreferences.shared }
-                    let workListName = await MainActor
-                        .run { prefs.workCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
-                    let calName = await MainActor.run { reminder.calendar.title }
-                    if !workListName.isEmpty, calName.caseInsensitiveCompare(workListName) == .orderedSame {
-                        let tagList = await MainActor.run { reminder.rmbCurrentTags() }
-                        let due = await MainActor.run { reminder.dueDateComponents?.date }
-                        let titleText = await MainActor.run { reminder.title ?? "" }
-                        skippedMerges.append(SkippedItem(
-                            title: titleText,
-                            reason: "work_list",
-                            calendar: calName,
-                            tags: tagList,
-                            due: due
-                        ))
-                        continue
-                    }
-                    let tags = await MainActor.run { reminder.rmbCurrentTags().map { $0.lowercased() } }
-                    if tags.contains("work") {
-                        let tagList = await MainActor.run { reminder.rmbCurrentTags() }
-                        let due = await MainActor.run { reminder.dueDateComponents?.date }
-                        let titleText = await MainActor.run { reminder.title ?? "" }
-                        skippedMerges.append(SkippedItem(
-                            title: titleText,
-                            reason: "work_tag",
-                            calendar: calName,
-                            tags: tagList,
-                            due: due
-                        ))
-                        continue
-                    }
-                }
 
                 let context = await fetchStoryContext(storyId: task.storyId, goalId: task.goalId)
 
@@ -4791,14 +4772,15 @@ actor FirebaseSyncService {
                     // Record change list for visibility (Bob -> Reminder)
                     var changes: [[String: Any]] = []
                     func addChange(_ field: String, _ oldVal: Any?, _ newVal: Any?) {
-                        let o = oldVal.map { String(describing: $0) } ?? ""
-                        let n = newVal.map { String(describing: $0) } ?? ""
-                        if o != n { changes.append(["field": field, "old": o, "new": n]) }
+                        let oldValue = oldVal.map { String(describing: $0) } ?? ""
+                        let newValue = newVal.map { String(describing: $0) } ?? ""
+                        if oldValue != newValue { changes.append(["field": field, "old": oldValue, "new": newValue]) }
                     }
                     addChange("title", reminder.title, task.title)
                     addChange("status", reminder.isCompleted, meta["status"])
                     addChange("dueDate", reminderDueDate?.timeIntervalSince1970, task.dueDate)
-                    addChange("tags", reminder.rmbCurrentTags(), task.tags)
+                    let reminderTags = await MainActor.run { reminder.rmbCurrentTags() }
+                    addChange("tags", reminderTags, task.tags)
                     if !changes.isEmpty { detailMeta["changes"] = changes }
 
                     SyncLogService.shared.logSyncDetail(
@@ -4829,7 +4811,7 @@ actor FirebaseSyncService {
                             SyncLogService.shared.logEvent(
                                 tag: "activity",
                                 level: "ERROR",
-                                message: "Failed to write update_to_reminder activity: \ (error.localizedDescription)"
+                                message: "Failed to write update_to_reminder activity: \(error.localizedDescription)"
                             )
                         }
                     }
