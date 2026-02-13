@@ -11,6 +11,7 @@ import FirebaseFunctions
 struct FbTask {
     let id: String
     let title: String
+    let persona: String?
     let dueDate: Double?
     let createdAt: Date?
     let completedAt: Date?
@@ -41,6 +42,8 @@ struct FbTask {
     let aiPriorityReason: String?
     let priorityReason: String?
     let aiFlaggedTop: Bool?
+    let aiTop3ForDay: Bool?
+    let aiTop3Date: String?
     // Optional flags/fields used for sync behavior
     let convertedToStoryId: String?
     let deletedFlag: Any?
@@ -52,6 +55,7 @@ struct FbTask {
 struct FbStory {
     let id: String
     let title: String
+    let persona: String?
     let status: Any?
     let reminderId: String?
     let sprintId: String?
@@ -63,6 +67,8 @@ struct FbStory {
     let dueDate: Double?
     let themeName: String?
     let aiFocusStoryRank: Int?
+    let aiTop3ForDay: Bool?
+    let aiTop3Date: String?
 }
 
 // swiftlint:disable cyclomatic_complexity function_body_length type_body_length file_length large_tuple
@@ -104,6 +110,13 @@ actor FirebaseSyncService {
     private let isoFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private let isoDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
         return formatter
     }()
 
@@ -260,7 +273,13 @@ actor FirebaseSyncService {
         recurrenceRules: [EKRecurrenceRule]? = nil
     ) -> String? {
         let lowerTitle = calendarTitle.lowercased()
-        let lowerTags = tags.map { $0.lowercased() }
+        let lowerTags = tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { $0.hasPrefix("#") ? String($0.dropFirst()) : $0 }
+            .map { $0.lowercased() }
+        if lowerTitle.contains("habit") || lowerTags.contains(where: { $0 == "habit" || $0 == "habitual" }) {
+            return "habit"
+        }
         if lowerTitle.contains("chore") || lowerTags.contains(where: { $0 == "chore" }) {
             return "chore"
         }
@@ -370,6 +389,74 @@ actor FirebaseSyncService {
         isoFormatter.string(from: Date(timeIntervalSince1970: millis / 1_000.0))
     }
 
+    private func todayIso() -> String {
+        isoDayFormatter.string(from: Date())
+    }
+
+    private func isTop3Today(flag: Bool?, dateString: String?) -> Bool {
+        guard flag == true else { return false }
+        guard let dateString, !dateString.isEmpty else { return true }
+        return dateString.prefix(10) == todayIso()
+    }
+
+    private func hasTop3Tag(_ tags: [String]) -> Bool {
+        tags.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "top3" }
+    }
+
+    private func isDueToday(dueMillis: Double?, top3Date: String?) -> Bool {
+        if let top3Date, !top3Date.isEmpty, top3Date.prefix(10) == todayIso() {
+            return true
+        }
+        guard let dueMillis else { return false }
+        let dueDate = Date(timeIntervalSince1970: dueMillis / 1_000.0)
+        return Calendar.current.isDate(dueDate, inSameDayAs: Date())
+    }
+
+    private func effectiveDueMillis(dueMillis: Double?, dueToday: Bool) -> Double? {
+        if let dueMillis { return dueMillis }
+        guard dueToday else { return nil }
+        let startOfDay = Calendar.current.startOfDay(for: Date())
+        return startOfDay.timeIntervalSince1970 * 1_000.0
+    }
+
+    private func applyPriorityTags(_ tags: [String], isTop3: Bool, dueToday: Bool) -> [String] {
+        let filtered = tags.filter { tag in
+            let lowered = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return lowered != "top3" && lowered != "due-today" && lowered != "due_today" && lowered != "due today"
+        }
+        var enriched = filtered
+        if isTop3 { enriched.append("Top3") }
+        return enriched
+    }
+
+    private func applyPersonaTags(_ tags: [String], persona: String?) -> [String] {
+        let filtered = tags.filter { tag in
+            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lowered = trimmed.lowercased()
+            let plain = lowered.hasPrefix("#") ? String(lowered.dropFirst()) : lowered
+            return plain != "work" && plain != "personal"
+        }
+        guard let persona = persona?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              persona == "work" || persona == "personal" else {
+            return filtered
+        }
+        return filtered + [persona]
+    }
+
+    private func stripParentTags(_ tags: [String], storyRef: String?, goalRef: String?) -> [String] {
+        let storyKey = storyRef?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let goalKey = goalRef?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return tags.filter { tag in
+            let trimmed = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lowered = trimmed.lowercased()
+            let plain = lowered.hasPrefix("#") ? String(lowered.dropFirst()) : lowered
+            if plain.hasPrefix("goal-") || plain.hasPrefix("story-") { return false }
+            if let storyKey, !storyKey.isEmpty, plain == storyKey { return false }
+            if let goalKey, !goalKey.isEmpty, plain == goalKey { return false }
+            return true
+        }
+    }
+
     private func stringValue(for value: Any?) -> String? {
         guard let value else { return nil }
         if let str = value as? String {
@@ -421,7 +508,8 @@ actor FirebaseSyncService {
             return "sprint\(digits)"
         }
         let lowered = name.lowercased().replacingOccurrences(of: " ", with: "")
-        return lowered.hasPrefix("sprint") ? lowered : "sprint\(lowered)"
+        let base = lowered.hasPrefix("sprint") ? lowered : "sprint\(lowered)"
+        return base
     }
 
     private func parseBobNote(notes: String?) -> (meta: [String: String], userLines: [String]) {
@@ -616,6 +704,30 @@ actor FirebaseSyncService {
             }
         }
 
+        func appendDeepLinksIfNeeded() {
+            var links: [String] = []
+            if let taskRef = meta["taskRef"], !taskRef.isEmpty,
+               let url = taskDeepLink(for: taskRef) {
+                links.append(url.absoluteString)
+            }
+            if let storyRef = meta["storyRef"], !storyRef.isEmpty,
+               let url = storyDeepLink(for: storyRef) {
+                links.append(url.absoluteString)
+            }
+            if let goalRef = meta["goalRef"], !goalRef.isEmpty,
+               let url = goalDeepLink(for: goalRef) {
+                links.append(url.absoluteString)
+            }
+            let uniqueLinks = Array(Set(links)).sorted()
+            guard !uniqueLinks.isEmpty else { return }
+            if !lines.isEmpty {
+                ensureBlankLineBeforeGeneratedContent()
+            }
+            lines.append(contentsOf: uniqueLinks)
+        }
+
+        appendDeepLinksIfNeeded()
+
         if includeMetadataBlock {
             if !lines.isEmpty {
                 ensureBlankLineBeforeGeneratedContent()
@@ -726,6 +838,10 @@ actor FirebaseSyncService {
 
     private nonisolated func storyDeepLink(for storyRef: String) -> URL? {
         URL(string: "https://bob.jc1.tech/stories/\(storyRef)")
+    }
+
+    private nonisolated func goalDeepLink(for goalRef: String) -> URL? {
+        URL(string: "https://bob.jc1.tech/goals/\(goalRef)")
     }
 
     private nonisolated func activityDeepLink(for taskRef: String) -> URL? {
@@ -1776,6 +1892,7 @@ actor FirebaseSyncService {
         return FbTask(
             id: doc.documentID,
             title: title,
+            persona: personaValue,
             dueDate: dueMillis,
             createdAt: Date(),
             completedAt: isCompleted ? now : nil,
@@ -1805,6 +1922,8 @@ actor FirebaseSyncService {
             aiPriorityReason: nil,
             priorityReason: nil,
             aiFlaggedTop: nil,
+            aiTop3ForDay: nil,
+            aiTop3Date: nil,
             convertedToStoryId: nil,
             deletedFlag: nil,
             reminderSyncDirective: nil,
@@ -1935,9 +2054,21 @@ actor FirebaseSyncService {
             tags = []
         }
 
+        let aiTop3Date: String? = {
+            if let str = data["aiTop3Date"] as? String { return str }
+            if let ts = data["aiTop3Date"] as? Timestamp {
+                return isoDayFormatter.string(from: ts.dateValue())
+            }
+            if let num = data["aiTop3Date"] as? NSNumber {
+                return isoDayFormatter.string(from: Date(timeIntervalSince1970: num.doubleValue / 1_000.0))
+            }
+            return nil
+        }()
+
         return FbTask(
             id: doc.documentID,
             title: data["title"] as? String ?? "Task",
+            persona: data["persona"] as? String,
             dueDate: dueDate,
             createdAt: createdAt,
             completedAt: completedAt,
@@ -1968,6 +2099,8 @@ actor FirebaseSyncService {
             aiPriorityReason: data["aiPriorityReason"] as? String,
             priorityReason: data["priorityReason"] as? String,
             aiFlaggedTop: data["aiFlaggedTop"] as? Bool,
+            aiTop3ForDay: data["aiTop3ForDay"] as? Bool,
+            aiTop3Date: aiTop3Date,
             convertedToStoryId: data["convertedToStoryId"] as? String,
             deletedFlag: data["deleted"],
             reminderSyncDirective: data["reminderSyncDirective"] as? String,
@@ -2027,9 +2160,21 @@ actor FirebaseSyncService {
             nil
         }
 
+        let aiTop3Date: String? = {
+            if let str = data["aiTop3Date"] as? String { return str }
+            if let ts = data["aiTop3Date"] as? Timestamp {
+                return isoDayFormatter.string(from: ts.dateValue())
+            }
+            if let num = data["aiTop3Date"] as? NSNumber {
+                return isoDayFormatter.string(from: Date(timeIntervalSince1970: num.doubleValue / 1_000.0))
+            }
+            return nil
+        }()
+
         return FbStory(
             id: doc.documentID,
             title: data["title"] as? String ?? "Story",
+            persona: data["persona"] as? String,
             status: data["status"],
             reminderId: data["reminderId"] as? String,
             sprintId: sprintId,
@@ -2040,7 +2185,9 @@ actor FirebaseSyncService {
             completedAt: completedAt,
             dueDate: dueDate,
             themeName: (data["themeId"] as? String) ?? (data["theme"] as? String),
-            aiFocusStoryRank: data["aiFocusStoryRank"] as? Int
+            aiFocusStoryRank: data["aiFocusStoryRank"] as? Int,
+            aiTop3ForDay: data["aiTop3ForDay"] as? Bool,
+            aiTop3Date: aiTop3Date
         )
     }
 
@@ -2340,19 +2487,39 @@ actor FirebaseSyncService {
             SyncLogService.shared.logEvent(
                 tag: "sync",
                 level: "INFO",
-                message: "Querying tasks (ownerUid=\(user.uid), sort=serverUpdatedAt, limit=3000)"
+                message: "Querying tasks (ownerUid=\(user.uid), sort=serverUpdatedAt, paginated)"
             )
-            // Prefer ordering/filtering by serverUpdatedAt for reliable deltas (server authoritative time)
-            var query: Query = db.collection("tasks").whereField("ownerUid", isEqualTo: user.uid)
-            if mode == .delta {
-                let since = await MainActor
-                    .run { UserPreferences.shared.lastDeltaSyncDate ?? UserPreferences.shared.lastSyncDate }
-                if let since { query = query.whereField("serverUpdatedAt", isGreaterThan: since) }
+            let since = await MainActor
+                .run { mode == .delta ? (UserPreferences.shared.lastDeltaSyncDate ?? UserPreferences.shared.lastSyncDate) : nil }
+            let pageSize = 1_000
+
+            func fetchTaskDocuments(orderField: String) async throws -> [QueryDocumentSnapshot] {
+                var allDocs: [QueryDocumentSnapshot] = []
+                var lastDocument: QueryDocumentSnapshot?
+                while true {
+                    var query: Query = db.collection("tasks")
+                        .whereField("ownerUid", isEqualTo: user.uid)
+                    if let since {
+                        query = query.whereField(orderField, isGreaterThan: since)
+                    }
+                    query = query.order(by: orderField, descending: true).limit(to: pageSize)
+                    if let lastDocument {
+                        query = query.start(afterDocument: lastDocument)
+                    }
+
+                    let pageSnapshot = try await query.getDocuments()
+                    allDocs.append(contentsOf: pageSnapshot.documents)
+                    guard let tail = pageSnapshot.documents.last, pageSnapshot.documents.count == pageSize else {
+                        break
+                    }
+                    lastDocument = tail
+                }
+                return allDocs
             }
-            query = query.order(by: "serverUpdatedAt", descending: true).limit(to: 3_000)
-            let taskQuerySnapshot: QuerySnapshot
+
+            let taskDocuments: [QueryDocumentSnapshot]
             do {
-                taskQuerySnapshot = try await query.getDocuments()
+                taskDocuments = try await fetchTaskDocuments(orderField: "serverUpdatedAt")
             } catch {
                 // Fallback when the composite index (ownerUid + serverUpdatedAt) is missing
                 let ns = error as NSError
@@ -2365,14 +2532,7 @@ actor FirebaseSyncService {
                         level: "WARN",
                         message: "Missing serverUpdatedAt index; falling back to updatedAt"
                     )
-                    var fallback = db.collection("tasks").whereField("ownerUid", isEqualTo: user.uid)
-                    if mode == .delta {
-                        let since = await MainActor
-                            .run { UserPreferences.shared.lastDeltaSyncDate ?? UserPreferences.shared.lastSyncDate }
-                        if let since { fallback = fallback.whereField("updatedAt", isGreaterThan: since) }
-                    }
-                    fallback = fallback.order(by: "updatedAt", descending: true).limit(to: 3_000)
-                    taskQuerySnapshot = try await fallback.getDocuments()
+                    taskDocuments = try await fetchTaskDocuments(orderField: "updatedAt")
                 } else {
                     throw error
                 }
@@ -2381,9 +2541,9 @@ actor FirebaseSyncService {
             SyncLogService.shared.logEvent(
                 tag: "sync",
                 level: "INFO",
-                message: "Tasks snapshot fetched in \(queryElapsed)ms"
+                message: "Tasks snapshot fetched in \(queryElapsed)ms (\(taskDocuments.count) docs)"
             )
-            var tasks = taskQuerySnapshot.documents.compactMap(toTask)
+            var tasks = taskDocuments.compactMap(toTask)
             // Prepare a single write batch early so imports and merges share one commit
             let batch = db.batch()
             // Prefetch related contexts in bulk to minimize per-doc reads
@@ -2436,11 +2596,56 @@ actor FirebaseSyncService {
                     message: "Story sync disabled; skipping story reminder load"
                 )
             }
-            let tasksWithoutReminders = tasks.filter { $0.reminderId == nil && !isDone($0.status) }
+            func isPriorityTask(_ task: FbTask) -> Bool {
+                if isTop3Today(flag: task.aiTop3ForDay, dateString: task.aiTop3Date) { return true }
+                if let rank = task.aiPriorityRank, rank > 0, rank <= 3 { return true }
+                if task.aiFlaggedTop == true { return true }
+                if hasTop3Tag(task.tags) { return true }
+                return false
+            }
+
+            func isPriorityStory(_ story: FbStory) -> Bool {
+                if isTop3Today(flag: story.aiTop3ForDay, dateString: story.aiTop3Date) { return true }
+                if let rank = story.aiFocusStoryRank, rank > 0, rank <= 3 { return true }
+                if hasTop3Tag(story.tags) { return true }
+                return false
+            }
+
+            let dueTodayTasks = tasks.filter { !isDone($0.status) && isDueToday(dueMillis: $0.dueDate, top3Date: $0.aiTop3Date) }
+            let dueTodayStories = stories.filter { !isStoryDone($0.status) && isDueToday(dueMillis: $0.dueDate, top3Date: $0.aiTop3Date) }
+
+            let flaggedTasks = dueTodayTasks.filter(isPriorityTask)
+            let flaggedStories = dueTodayStories.filter(isPriorityStory)
+
+            func sortTasks(_ lhsTask: FbTask, _ rhsTask: FbTask) -> Bool {
+                let ar = lhsTask.aiPriorityRank ?? Int.max
+                let br = rhsTask.aiPriorityRank ?? Int.max
+                if ar != br { return ar < br }
+                let ascore = lhsTask.aiCriticalityScore ?? lhsTask.aiPriorityScore ?? 0
+                let bscore = rhsTask.aiCriticalityScore ?? rhsTask.aiPriorityScore ?? 0
+                if ascore != bscore { return ascore > bscore }
+                let adue = lhsTask.dueDate ?? 0
+                let bdue = rhsTask.dueDate ?? 0
+                return adue < bdue
+            }
+
+            func sortStories(_ lhsStory: FbStory, _ rhsStory: FbStory) -> Bool {
+                let ar = lhsStory.aiFocusStoryRank ?? Int.max
+                let br = rhsStory.aiFocusStoryRank ?? Int.max
+                if ar != br { return ar < br }
+                let adue = lhsStory.dueDate ?? 0
+                let bdue = rhsStory.dueDate ?? 0
+                return adue < bdue
+            }
+
+            let priorityTasks = Array((flaggedTasks.isEmpty ? dueTodayTasks : flaggedTasks).sorted(by: sortTasks).prefix(3))
+            let priorityStories = Array((flaggedStories.isEmpty ? dueTodayStories : flaggedStories).sorted(by: sortStories).prefix(3))
+
+            let tasksWithoutReminders = priorityTasks.filter { $0.reminderId == nil && !isDone($0.status) }
             SyncLogService.shared.logEvent(
                 tag: "sync",
                 level: "INFO",
-                message: "Fetched tasks: \(tasks.count); missing reminders: \(tasksWithoutReminders.count)"
+                message: "Fetched tasks: \(tasks.count); priority tasks: \(priorityTasks.count); missing reminders: \(tasksWithoutReminders.count)"
             )
             var taskById: [String: FbTask] = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
             var taskByReminderIdLatest: [String: FbTask] = [:]
@@ -2510,7 +2715,10 @@ actor FirebaseSyncService {
                 // Only include human-friendly refs in note
                 if let sid = task.storyId { meta["storyId"] = sid }
                 if let gid = task.goalId { meta["goalId"] = gid }
-                if let due = task.dueDate { meta["due"] = isoString(forMillis: due) }
+                let isTop3Task = isPriorityTask(task)
+                let isDueTodayTask = isDueToday(dueMillis: task.dueDate, top3Date: task.aiTop3Date)
+                let effectiveDue = effectiveDueMillis(dueMillis: task.dueDate, dueToday: isDueTodayTask)
+                if let due = effectiveDue { meta["due"] = isoString(forMillis: due) }
                 if let storyRef = context.storyRef { meta["storyRef"] = storyRef }
                 if let goalRef = context.goalRef { meta["goalRef"] = goalRef }
                 if let parentStoryRef = parentContext?.storyRef { meta["parentStoryRef"] = parentStoryRef }
@@ -2523,10 +2731,11 @@ actor FirebaseSyncService {
                 meta["list"] = task.reminderListName ?? calendarInfo.name
                 meta["listId"] = task.reminderListId ?? calendarInfo.id
                 // Compose enriched tags for note (#tags: ...)
-                var tagSet = Set(task.tags)
+                let baseTags = stripParentTags(task.tags, storyRef: context.storyRef, goalRef: context.goalRef)
+                let prioritizedTags = applyPriorityTags(baseTags, isTop3: isTop3Task, dueToday: isDueTodayTask)
+                let personaTags = applyPersonaTags(prioritizedTags, persona: task.persona)
+                var tagSet = Set(personaTags)
                 if let taskType = task.type { tagSet.insert(taskType) }
-                if let sref = context.storyRef { tagSet.insert(sref) }
-                if let gref = context.goalRef { tagSet.insert(gref) }
                 if let tname = context.themeName { tagSet.insert(tname) }
                 if let sprintTag = makeSprintTag(from: context.sprintName) { tagSet.insert(sprintTag) }
                 let tagList = Array(tagSet).sorted()
@@ -2554,6 +2763,13 @@ actor FirebaseSyncService {
                                 needsSave = true
                             }
                         }
+                        if let dueMs = effectiveDue {
+                            let date = Date(timeIntervalSince1970: dueMs / 1_000.0)
+                            if reminder.dueDateComponents?.date != date {
+                                reminder.dueDateComponents = date.dateComponents(withTime: reminder.hasTime)
+                                needsSave = true
+                            }
+                        }
                         if includeMetadata, reminder.rmbSetTagsList(newTags: tagList) {
                             needsSave = true
                         }
@@ -2568,7 +2784,7 @@ actor FirebaseSyncService {
                     "status": meta["status"] ?? "unknown",
                     "calendar": meta["list"] ?? calendarInfo.name
                 ]
-                if let due = task.dueDate { detailMeta["due"] = isoString(forMillis: due) }
+                if let due = effectiveDue { detailMeta["due"] = isoString(forMillis: due) }
                 if let storyRef = context.storyRef { detailMeta["storyRef"] = storyRef }
                 if let goalRef = context.goalRef { detailMeta["goalRef"] = goalRef }
                 if let theme = context.themeName { detailMeta["theme"] = theme }
@@ -2737,6 +2953,7 @@ actor FirebaseSyncService {
                         let placeholder = FbTask(
                             id: taskId,
                             title: placeholderTitle,
+                            persona: nil,
                             dueDate: nil,
                             createdAt: nil,
                             completedAt: nil,
@@ -2745,12 +2962,12 @@ actor FirebaseSyncService {
                             iosReminderId: nil,
                             status: nil,
                             storyId: nil,
-            goalId: nil,
-            parentId: nil,
-            parentType: nil,
-            reference: nil,
-            sourceRef: nil,
-            externalId: nil,
+                            goalId: nil,
+                            parentId: nil,
+                            parentType: nil,
+                            reference: nil,
+                            sourceRef: nil,
+                            externalId: nil,
                             updatedAt: nil,
                             serverUpdatedAt: nil,
                             reminderListId: reminderCalendarInfo.id,
@@ -2766,6 +2983,8 @@ actor FirebaseSyncService {
                             aiPriorityReason: nil,
                             priorityReason: nil,
                             aiFlaggedTop: nil,
+                            aiTop3ForDay: nil,
+                            aiTop3Date: nil,
                             convertedToStoryId: nil,
                             deletedFlag: nil,
                             reminderSyncDirective: nil,
@@ -3702,10 +3921,13 @@ actor FirebaseSyncService {
                     continue
                 }
 
+                let isTop3Task = isPriorityTask(task)
+                let isDueTodayTask = isDueToday(dueMillis: task.dueDate, top3Date: task.aiTop3Date)
+                let effectiveDue = effectiveDueMillis(dueMillis: task.dueDate, dueToday: isDueTodayTask)
+
                 var rmb = RmbReminder()
                 rmb.title = task.title
-                if let due = task
-                    .dueDate {
+                if let due = effectiveDue {
                     rmb.hasDueDate = true; rmb.hasTime = false; rmb
                         .date = Date(timeIntervalSince1970: due / 1_000.0)
                 }
@@ -3717,7 +3939,7 @@ actor FirebaseSyncService {
                 ]
                 if let sid = task.storyId { noteMeta["storyId"] = sid }
                 if let gid = task.goalId { noteMeta["goalId"] = gid }
-                if let due = task.dueDate { noteMeta["due"] = isoString(forMillis: due) }
+                if let due = effectiveDue { noteMeta["due"] = isoString(forMillis: due) }
                 if let storyRef { noteMeta["storyRef"] = storyRef }
                 if let goalRef { noteMeta["goalRef"] = goalRef }
                 if let parentStoryRef = parentContext?.storyRef { noteMeta["parentStoryRef"] = parentStoryRef }
@@ -3729,13 +3951,13 @@ actor FirebaseSyncService {
                 if let sprintName { noteMeta["sprint"] = sprintName }
                 if let sid = context.sprintId { noteMeta["sprintId"] = sid }
                 if let themeName { noteMeta["theme"] = themeName }
-                if task.aiFlaggedTop == true { noteMeta["flaggedTop"] = "true" }
-                var tagCandidates: [String] = task.tags
+                if isTop3Task { noteMeta["flaggedTop"] = "true" }
+                var tagCandidates: [String] = stripParentTags(task.tags, storyRef: storyRef, goalRef: goalRef)
                 if let taskType = task.type { tagCandidates.append(taskType) }
                 if let sprintTag { tagCandidates.append(sprintTag) } else if let sprintName { tagCandidates.append(sprintName) }
-                if let storyRef { tagCandidates.append("story-\(storyRef)") }
-                if let goalRef { tagCandidates.append("goal-\(goalRef)") }
                 if let themeName { tagCandidates.append(themeName) }
+                tagCandidates = applyPriorityTags(tagCandidates, isTop3: isTop3Task, dueToday: isDueTodayTask)
+                tagCandidates = applyPersonaTags(tagCandidates, persona: task.persona)
                 let tagsForReminder = uniqueTags(tagCandidates)
                 if !tagsForReminder.isEmpty { noteMeta["tags"] = tagsForReminder.joined(separator: ", ") }
                 let (includeMetadata, detailLevel) = await metadataPreferences()
@@ -3771,7 +3993,7 @@ actor FirebaseSyncService {
                     "calendar": cal.title,
                     "status": statusString(for: task.status)
                 ]
-                if let due = task.dueDate { creationMeta["due"] = isoString(forMillis: due) }
+                if let due = effectiveDue { creationMeta["due"] = isoString(forMillis: due) }
                 if let themeName { creationMeta["theme"] = themeName }
                 if let sprintName { creationMeta["sprint"] = sprintName }
                 if let storyRef { creationMeta["storyRef"] = storyRef }
@@ -3811,6 +4033,7 @@ actor FirebaseSyncService {
                     taskByReminderIdLatest[rid] = FbTask(
                         id: task.id,
                         title: task.title,
+                        persona: task.persona,
                         dueDate: task.dueDate,
                         createdAt: task.createdAt,
                         completedAt: task.completedAt,
@@ -3840,6 +4063,8 @@ actor FirebaseSyncService {
                         aiPriorityReason: task.aiPriorityReason,
                         priorityReason: task.priorityReason,
                         aiFlaggedTop: task.aiFlaggedTop,
+                        aiTop3ForDay: task.aiTop3ForDay,
+                        aiTop3Date: task.aiTop3Date,
                         convertedToStoryId: task.convertedToStoryId,
                         deletedFlag: task.deletedFlag,
                         reminderSyncDirective: task.reminderSyncDirective,
@@ -3849,9 +4074,9 @@ actor FirebaseSyncService {
                 }
             }
 
-            // Create reminders for active sprint stories
+            // Create reminders for active sprint stories (priority/top 3 only)
             if shouldSyncStories {
-                let storiesToCreate = stories.filter { $0.reminderId == nil && !isStoryDone($0.status) }
+                let storiesToCreate = priorityStories.filter { $0.reminderId == nil && !isStoryDone($0.status) }
                 if !storiesToCreate.isEmpty {
                     SyncLogService.shared.logEvent(
                         tag: "sync",
@@ -3860,8 +4085,14 @@ actor FirebaseSyncService {
                     )
                 }
                 for story in storiesToCreate {
+                    let context = await fetchStoryContext(storyId: story.id, goalId: nil)
                     let storyRef = (story.ref?.isEmpty == false) ? story.ref! : "ST-\(story.id.suffix(6).uppercased())"
                     let sprintTag = makeSprintTag(from: story.sprintName)
+                    let goalRef = context.goalRef
+                    let resolvedThemeName = story.themeName ?? context.themeName
+                    let isTop3Story = isPriorityStory(story)
+                    let isDueTodayStory = isDueToday(dueMillis: story.dueDate, top3Date: story.aiTop3Date)
+                    let effectiveDue = effectiveDueMillis(dueMillis: story.dueDate, dueToday: isDueTodayStory)
                     func uniqueTags(_ list: [String]) -> [String] {
                         var seen = Set<String>()
                         return list.compactMap { raw in
@@ -3883,7 +4114,7 @@ actor FirebaseSyncService {
 
                     var storyReminder = RmbReminder()
                     storyReminder.title = story.title
-                    if let dueMs = story.dueDate {
+                    if let dueMs = effectiveDue {
                         storyReminder.hasDueDate = true
                         storyReminder.hasTime = false
                         storyReminder.date = Date(timeIntervalSince1970: dueMs / 1_000.0)
@@ -3899,13 +4130,18 @@ actor FirebaseSyncService {
                         "listId": cal.calendarIdentifier
                     ]
                     if let sprintName = story.sprintName { meta["sprint"] = sprintName }
-                    if let theme = story.themeName { meta["theme"] = theme }
+                    if let theme = resolvedThemeName { meta["theme"] = theme }
                     if let rank = story.aiFocusStoryRank { meta["aiFocusStoryRank"] = "\(rank)" }
+                    if let due = effectiveDue { meta["due"] = isoString(forMillis: due) }
+                    if let goalRef { meta["goalRef"] = goalRef }
                     let (includeMetadata, detailLevel) = await metadataPreferences()
                     var tagCandidates = story.tags
                     tagCandidates.append("story")
                     if let sprintTag { tagCandidates.append(sprintTag) }
-                    if let theme = story.themeName { tagCandidates.append(theme) }
+                    if let theme = resolvedThemeName { tagCandidates.append(theme) }
+                    if let goalRef { tagCandidates.append("goal-\(goalRef)"); tagCandidates.append(goalRef) }
+                    tagCandidates = applyPriorityTags(tagCandidates, isTop3: isTop3Story, dueToday: isDueTodayStory)
+                    tagCandidates = applyPersonaTags(tagCandidates, persona: story.persona)
                     let tagsForReminder = uniqueTags(tagCandidates)
                     if !tagsForReminder.isEmpty { meta["tags"] = tagsForReminder.joined(separator: ", ") }
                     storyReminder.notes = composeBobNote(
@@ -3939,9 +4175,10 @@ actor FirebaseSyncService {
                         "calendar": cal.title
                     ]
                     if let sprint = story.sprintName { metaLog["sprint"] = sprint }
-                    if let theme = story.themeName { metaLog["theme"] = theme }
-                    if let due = story.dueDate { metaLog["due"] = isoString(forMillis: due) }
+                    if let theme = resolvedThemeName { metaLog["theme"] = theme }
+                    if let due = effectiveDue { metaLog["due"] = isoString(forMillis: due) }
                     if let rank = story.aiFocusStoryRank { metaLog["aiFocusStoryRank"] = rank }
+                    if let goalRef { metaLog["goalRef"] = goalRef }
                     if !tagsForReminder.isEmpty { metaLog["tags"] = tagsForReminder }
                     SyncLogService.shared.logSyncDetail(
                         direction: .toReminders,
@@ -3956,6 +4193,7 @@ actor FirebaseSyncService {
                         storyByReminderIdLatest[rid] = FbStory(
                             id: story.id,
                             title: story.title,
+                            persona: story.persona,
                             status: story.status,
                             reminderId: rid,
                             sprintId: story.sprintId,
@@ -3966,7 +4204,9 @@ actor FirebaseSyncService {
                             completedAt: story.completedAt,
                             dueDate: story.dueDate,
                             themeName: story.themeName,
-                            aiFocusStoryRank: story.aiFocusStoryRank
+                            aiFocusStoryRank: story.aiFocusStoryRank,
+                            aiTop3ForDay: story.aiTop3ForDay,
+                            aiTop3Date: story.aiTop3Date
                         )
                         let ref = db.collection("stories").document(story.id)
                         batch.setData([
@@ -4027,6 +4267,7 @@ actor FirebaseSyncService {
                 let rid = reminder.calendarItemIdentifier
                 if let matchedStory = storyByReminderIdLatest[rid] {
                     let nowMs = Date().timeIntervalSince1970 * 1_000.0
+                    let context = await fetchStoryContext(storyId: matchedStory.id, goalId: nil)
                     let storyRefValue = (matchedStory.ref?.isEmpty == false)
                         ? matchedStory.ref!
                         : "ST-\(matchedStory.id.suffix(6).uppercased())"
@@ -4038,6 +4279,11 @@ actor FirebaseSyncService {
                     let storyIsDone = isStoryDone(matchedStory.status)
                     let reminderLastModified = await MainActor.run { reminder.lastModifiedDate ?? Date.distantPast }
                     let storyUpdated = matchedStory.updatedAt ?? Date.distantPast
+                    let goalRef = context.goalRef
+                    let resolvedThemeName = matchedStory.themeName ?? context.themeName
+                    let isTop3Story = isPriorityStory(matchedStory)
+                    let isDueTodayStory = isDueToday(dueMillis: matchedStory.dueDate, top3Date: matchedStory.aiTop3Date)
+                    let effectiveDue = effectiveDueMillis(dueMillis: matchedStory.dueDate, dueToday: isDueTodayStory)
                     var meta: [String: String] = [
                         "storyRef": storyRefValue,
                         "type": "story",
@@ -4047,13 +4293,17 @@ actor FirebaseSyncService {
                         "listId": await MainActor.run { reminder.calendar.calendarIdentifier }
                     ]
                     if let sprintName { meta["sprint"] = sprintName }
-                    if let theme = matchedStory.themeName { meta["theme"] = theme }
+                    if let theme = resolvedThemeName { meta["theme"] = theme }
                     if let rank = matchedStory.aiFocusStoryRank { meta["aiFocusStoryRank"] = "\(rank)" }
-                    if let due = matchedStory.dueDate { meta["due"] = isoString(forMillis: due) }
+                    if let due = effectiveDue { meta["due"] = isoString(forMillis: due) }
+                    if let goalRef { meta["goalRef"] = goalRef }
                     var tagCandidates = matchedStory.tags
                     if let sprintTag { tagCandidates.append(sprintTag) }
-                    if let theme = matchedStory.themeName { tagCandidates.append(theme) }
+                    if let theme = resolvedThemeName { tagCandidates.append(theme) }
+                    if let goalRef { tagCandidates.append("goal-\(goalRef)"); tagCandidates.append(goalRef) }
                     tagCandidates.append("story")
+                    tagCandidates = applyPriorityTags(tagCandidates, isTop3: isTop3Story, dueToday: isDueTodayStory)
+                    tagCandidates = applyPersonaTags(tagCandidates, persona: matchedStory.persona)
                     let tagsForReminder = Set(tagCandidates.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                         .filter { !$0.isEmpty }).sorted()
                     if !tagsForReminder.isEmpty { meta["tags"] = tagsForReminder.joined(separator: ", ") }
@@ -4061,6 +4311,7 @@ actor FirebaseSyncService {
                     let notesValue = await MainActor.run { reminder.notes }
                     var (_, userLines) = parseBobNote(notes: notesValue)
                     let desiredURL = storyDeepLink(for: storyRefValue)
+                    let reminderDueDate = await MainActor.run { reminder.dueDateComponents?.date }
                     let rebuilt = composeBobNote(
                         meta: meta,
                         userLines: userLines,
@@ -4076,6 +4327,18 @@ actor FirebaseSyncService {
                         if let url = desiredURL, reminder.url != url {
                             reminder.url = url
                             needsSave = true
+                        }
+                        if let dueMs = effectiveDue {
+                            let date = Date(timeIntervalSince1970: dueMs / 1_000.0)
+                            if reminderDueDate != date {
+                                reminder.dueDateComponents = date.dateComponents(withTime: reminder.hasTime)
+                                needsSave = true
+                            }
+                        }
+                        if includeMetadata {
+                            if reminder.rmbSetTagsList(newTags: tagsForReminder) {
+                                needsSave = true
+                            }
                         }
                         if needsSave {
                             RemindersService.shared.save(reminder: reminder)
@@ -4204,9 +4467,7 @@ actor FirebaseSyncService {
                 )
 
                 let mergedTags: [String] = {
-                    var set = Set(reminderTags)
-                    if let sref = parsed.meta["storyRef"], !sref.isEmpty { set.insert(sref) }
-                    if let gref = parsed.meta["goalRef"], !gref.isEmpty { set.insert(gref) }
+                    var set = Set(stripParentTags(reminderTags, storyRef: parsed.meta["storyRef"], goalRef: parsed.meta["goalRef"]))
                     if let tname = parsed.meta["theme"], !tname.isEmpty { set.insert(tname) }
                     if let sprintName = parsed.meta["sprint"],
                        let sprintTag = makeSprintTag(from: sprintName) { set.insert(sprintTag) }
@@ -4276,6 +4537,14 @@ actor FirebaseSyncService {
                         return trimmed.isEmpty ? nil : trimmed
                     }
                 }
+                let workListName = await MainActor.run {
+                    UserPreferences.shared.workCalendarName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                }
+                let personaValue = resolveReminderPersona(
+                    listName: currentCalendarTitle,
+                    tags: reminderTags,
+                    workListName: workListName
+                )
                 let reminderLastModified = await MainActor.run { reminder.lastModifiedDate ?? Date.distantPast }
                 let metaSynced = parseISO(meta["synced"]) ?? Date.distantPast
                 let reminderEffectiveUpdated = max(reminderLastModified, metaSynced)
@@ -4293,8 +4562,8 @@ actor FirebaseSyncService {
                 hasStoryUrl ||
                 isStoryReminderId
 
-            // Always ensure task reminders carry a Bob deep link even when metadata is disabled.
-            if !dryRun, !isStoryOwnedReminder {
+            // Always ensure task reminders carry a Bob task deep link even when metadata is disabled.
+            if !dryRun {
                 let linkURL = taskDeepLink(for: taskRefValue)
                 await MainActor.run {
                     if let url = linkURL, reminder.url != url {
@@ -4324,7 +4593,8 @@ actor FirebaseSyncService {
                         "updatedAt": FieldValue.serverTimestamp(),
                         "title": reminderTitle,
                         "status": reminderCompleted ? 2 : 0,
-                        "reminderId": rid
+                        "reminderId": rid,
+                        "persona": personaValue
                     ]
                     if pushData["createdVia"] == nil {
                         pushData["createdVia"] = "mac"
@@ -4404,10 +4674,8 @@ actor FirebaseSyncService {
                     if let taskRef = task.reference, !taskRef.isEmpty { pushData["reference"] = taskRef }
 
                     // Compose enriched tags for note metadata early so we can include in push + log
-                    var tagSet = Set(reminderTags)
+                    var tagSet = Set(stripParentTags(reminderTags, storyRef: context.storyRef, goalRef: context.goalRef))
                     if let itemType { tagSet.insert(itemType) }
-                    if let sref = context.storyRef { tagSet.insert(sref) }
-                    if let gref = context.goalRef { tagSet.insert(gref) }
                     if let tname = context.themeName { tagSet.insert(tname) }
                     if let sprintTag = makeSprintTag(from: context.sprintName) { tagSet.insert(sprintTag) }
                     let tagList = Array(tagSet).sorted()
@@ -4917,13 +5185,12 @@ actor FirebaseSyncService {
                 }
 
                 // Compose enriched #tags line for the reminder note
-                var tagSetForMeta = Set(task.tags)
+                var tagSetForMeta = Set(stripParentTags(task.tags, storyRef: context.storyRef, goalRef: context.goalRef))
                 if let taskType = task.type { tagSetForMeta.insert(taskType) }
-                if let sref = context.storyRef { tagSetForMeta.insert(sref) }
-                if let gref = context.goalRef { tagSetForMeta.insert(gref) }
                 if let tname = context.themeName { tagSetForMeta.insert(tname) }
                 if let sprintTag = makeSprintTag(from: context.sprintName) { tagSetForMeta.insert(sprintTag) }
-                let tagListForMeta = Array(tagSetForMeta).sorted()
+                let tagListWithPersona = applyPersonaTags(Array(tagSetForMeta), persona: task.persona)
+                let tagListForMeta = Array(Set(tagListWithPersona)).sorted()
                 if !tagListForMeta.isEmpty {
                     let joined = tagListForMeta.joined(separator: ", ")
                     if meta["tags"] != joined { meta["tags"] = joined; metaChanged = true }

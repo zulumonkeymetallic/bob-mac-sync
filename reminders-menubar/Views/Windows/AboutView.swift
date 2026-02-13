@@ -17,6 +17,8 @@ struct AboutView: View {
                         .font(Font.title.weight(.thin))
                     Text(rmbLocalized(.appVersionDescription, arguments: AppConstants.currentVersion))
                         .font(Font.callout.weight(.light))
+                    Text("Built: \(AppConstants.buildDate)")
+                        .font(Font.caption.weight(.light))
                 }
                 .padding(.bottom, 4)
 

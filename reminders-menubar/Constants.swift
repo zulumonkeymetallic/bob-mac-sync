@@ -11,6 +11,20 @@ enum AppConstants {
         return "v\(bundleVersion) (build: \(buildVersion))"
     }()
 
+    static let buildDate: String = {
+        guard let executableURL = Bundle.main.executableURL,
+              let values = try? executableURL.resourceValues(forKeys: [.contentModificationDateKey]),
+              let buildDate = values.contentModificationDate
+        else {
+            return "-"
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.timeZone = TimeZone.current
+        return formatter.string(from: buildDate)
+    }()
+
     static let appName = "Reminders MenuBar"
     static let mainBundleId = "com.jc1.tech.bob"
     static let launcherBundleId = "com.jc1.tech"
