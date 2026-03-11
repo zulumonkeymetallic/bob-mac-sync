@@ -28,6 +28,7 @@ struct FbTask {
     let externalId: String?
     let updatedAt: Date?
     let serverUpdatedAt: Date?
+    let macSyncedAt: Date?
     let reminderListId: String?
     let reminderListName: String?
     let tags: [String]
@@ -2069,6 +2070,22 @@ actor FirebaseSyncService {
             }
             return nil
         }()
+        let macSyncedAt: Date? = {
+            if let timestamp = data["macSyncedAt"] as? Timestamp {
+                return timestamp.dateValue()
+            }
+            if let dateValue = data["macSyncedAt"] as? Date {
+                return dateValue
+            }
+            if let numberValue = data["macSyncedAt"] as? NSNumber {
+                return Date(timeIntervalSince1970: numberValue.doubleValue / 1_000.0)
+            }
+            if let stringValue = data["macSyncedAt"] as? String,
+               let parsedDate = isoFormatter.date(from: stringValue) {
+                return parsedDate
+            }
+            return nil
+        }()
         let completedAt: Date? = {
             if let timestamp = data["completedAt"] as? Timestamp {
                 return timestamp.dateValue()
@@ -2181,6 +2198,7 @@ actor FirebaseSyncService {
             externalId: (data["taskId"] as? String) ?? (data["externalId"] as? String),
             updatedAt: updatedAt,
             serverUpdatedAt: serverUpdatedAt,
+            macSyncedAt: macSyncedAt,
             reminderListId: reminderListId,
             reminderListName: reminderListName,
             tags: tags,
@@ -4790,6 +4808,9 @@ actor FirebaseSyncService {
                 if let prevServerUpdated = matchedTask.serverUpdatedAt {
                     pushMeta["previousServerUpdatedAt"] = isoFormatter.string(from: prevServerUpdated)
                 }
+                if let prevMacSyncedAt = matchedTask.macSyncedAt {
+                    pushMeta["previousMacSyncedAt"] = isoFormatter.string(from: prevMacSyncedAt)
+                }
                 pushMeta["staleTop3Reconciled"] = staleTop3
                 if let aiRank = matchedTask.aiPriorityRank { pushMeta["aiPriorityRank"] = aiRank }
                 if let aiTop3Date = matchedTask.aiTop3Date, !aiTop3Date.isEmpty { pushMeta["aiTop3Date"] = aiTop3Date }
@@ -5006,6 +5027,12 @@ actor FirebaseSyncService {
                     if let aiBucketVal { logMeta["aiPriorityBucket"] = aiBucketVal }
                     if let aiRankVal { logMeta["aiPriorityRank"] = aiRankVal }
                     if let aiReasonVal, !aiReasonVal.isEmpty { logMeta["aiPriorityReason"] = aiReasonVal }
+                    if let prevServerUpdated = task.serverUpdatedAt {
+                        logMeta["previousServerUpdatedAt"] = isoFormatter.string(from: prevServerUpdated)
+                    }
+                    if let prevMacSyncedAt = task.macSyncedAt {
+                        logMeta["previousMacSyncedAt"] = isoFormatter.string(from: prevMacSyncedAt)
+                    }
                     logMeta["staleTop3Reconciled"] = staleTop3
                     let taskRefValue = (task.reference?.isEmpty == false) ? (task.reference ?? task.id) : task.id
                     logMeta["taskRef"] = taskRefValue
