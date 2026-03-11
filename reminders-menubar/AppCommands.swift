@@ -7,10 +7,20 @@ struct AppCommands: Commands {
 
     @CommandsBuilder var body: some Commands {
         CommandMenu(Text(verbatim: "Bob")) {
-            Button("Sync with Bob") { ManualSyncService.shared.trigger(reason: "Command Menu") }
+            Button("Full Sync with Bob") {
+                ManualSyncService.shared.triggerWithMode(reason: "Command Menu - Full Sync", mode: .full)
+            }
                 .keyboardShortcut(KeyEquivalent("s"), modifiers: [.command, .shift])
                 .disabled(manualSyncService.isSyncing)
 
+            Button("Delta Sync with Bob") {
+                ManualSyncService.shared.triggerWithMode(reason: "Command Menu - Delta Sync", mode: .delta)
+            }
+                .keyboardShortcut(KeyEquivalent("d"), modifiers: [.command, .shift])
+                .disabled(manualSyncService.isSyncing)
+
+            Divider()
+            
             Button("Sign In to Bob…") { FirebaseAuthView.showWindow() }
                 .keyboardShortcut(KeyEquivalent("b"), modifiers: [.command, .option])
 
@@ -78,9 +88,12 @@ struct AppCommands: Commands {
             Button("Delete All Duplicates…") {
                 Task {
                     let result = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: true)
-                    let msg = result.error == nil ?
-                        "Deleted \(result.deleted) duplicates across \(result.groups) groups" :
-                        "Delete duplicates failed: \(result.error!)"
+                    let msg: String
+                    if let error = result.error {
+                        msg = "Delete duplicates failed: \(error)"
+                    } else {
+                        msg = "Deleted \(result.deleted) duplicates across \(result.groups) groups"
+                    }
                     SyncLogService.shared.logEvent(
                         tag: "dedupe",
                         level: result.error == nil ? "INFO" : "ERROR",

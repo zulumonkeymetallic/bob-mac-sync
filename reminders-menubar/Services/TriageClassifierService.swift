@@ -20,6 +20,7 @@ struct TriageClassification {
 
 actor TriageClassifierService {
     static let shared = TriageClassifierService()
+
     private init() {}
 
     private let requestTimeout: TimeInterval = 3.0
@@ -82,7 +83,14 @@ actor TriageClassifierService {
             guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
             let rawPersona = (obj["persona"] as? String)?.lowercased()
             let confidence = (obj["confidence"] as? NSNumber)?.doubleValue ?? 0.0
-            let persona: TriagePersona = if rawPersona == "work" { .work } else if rawPersona == "personal" { .personal } else { .unknown }
+            let persona: TriagePersona
+            if rawPersona == "work" {
+                persona = .work
+            } else if rawPersona == "personal" {
+                persona = .personal
+            } else {
+                persona = .unknown
+            }
             // Optional theme hint if provided by endpoint
             let suggestedTheme = (obj["theme"] as? String) ?? (obj["suggestedTheme"] as? String)
             return .init(persona: persona, confidence: confidence, source: "llm", suggestedTheme: suggestedTheme)
@@ -105,7 +113,9 @@ actor TriageClassifierService {
             ("standup", 1.2), ("sprint", 1.2), ("story", 1.0), ("epic", 1.0), ("bug", 1.0),
             ("pr ", 1.2), ("pull request", 1.2), ("merge", 1.0), ("release", 1.0),
             ("okr", 1.1), ("quarter", 1.0), ("roadmap", 1.0), ("production issue", 1.5),
-            ("work", 1.0), ("office", 1.0), ("shift", 1.0), ("invoice", 1.1)
+            ("work", 1.0), ("office", 1.0), ("shift", 1.0), ("invoice", 1.1),
+            ("email", 1.0), ("snow", 1.2), ("servicenow", 1.3), ("sam", 1.1),
+            ("ham", 1.1), ("itom", 1.3), ("itam", 1.3)
         ]
         let personalKeywords: [(String, Double)] = [
             ("wash", 1.2), ("washing machine", 1.6), ("laundry", 1.3), ("grocer", 1.1), ("shopping", 1.0),
@@ -165,7 +175,9 @@ actor TriageClassifierService {
             (["grocer", "shopping"], "Shopping")
         ]
         for (needles, theme) in pairs {
-            if needles.contains(where: { text.contains($0) }) { return theme }
+            for needle in needles where text.contains(needle) {
+                return theme
+            }
         }
         return nil
     }

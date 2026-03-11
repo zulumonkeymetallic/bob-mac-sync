@@ -16,11 +16,10 @@ enum AppConstants {
               let values = try? executableURL.resourceValues(forKeys: [.contentModificationDateKey]),
               let buildDate = values.contentModificationDate
         else {
-            return "-"
+            return "Unknown"
         }
         let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
         formatter.timeZone = TimeZone.current
         return formatter.string(from: buildDate)
     }()

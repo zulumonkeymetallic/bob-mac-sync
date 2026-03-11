@@ -24,7 +24,7 @@ struct ReminderItemView: View {
     }
 
     @ViewBuilder
-    func mainReminderItemView() -> some View {
+    func mainReminderItemView() -> some View { // swiftlint:disable:this function_body_length
         HStack(alignment: .top) {
             ReminderCompleteButton(reminderItem: reminderItem)
 
@@ -43,7 +43,6 @@ struct ReminderItemView: View {
 
                     Spacer()
 
-                    // TODO: remove the `.id` modifier while keeping properties updated (such as selected priority)
                     ReminderEllipsisMenuView(
                         showingEditPopover: $showingEditPopover,
                         showingRemoveAlert: $showingRemoveAlert,

@@ -13,6 +13,7 @@ class RemindersData: ObservableObject {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     private func addObservers() {
         NotificationCenter.default.publisher(for: .EKEventStoreChanged)
             .sink { [weak self] _ in
@@ -169,6 +170,6 @@ class RemindersData: ObservableObject {
     }
 
     private func updateMenuBarCount(with count: Int) {
-        AppDelegate.shared.updateMenuBarTodayCount(to: count)
+        AppDelegate.shared?.updateMenuBarTodayCount(to: count)
     }
 }

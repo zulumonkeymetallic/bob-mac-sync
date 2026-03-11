@@ -185,7 +185,9 @@ actor FirebaseSyncService {
             ("standup", 1.2), ("sprint", 1.2), ("story", 1.0), ("epic", 1.0), ("bug", 1.0),
             ("pr ", 1.2), ("pull request", 1.2), ("merge", 1.0), ("release", 1.0),
             ("okr", 1.1), ("quarter", 1.0), ("roadmap", 1.0), ("production issue", 1.5),
-            ("work", 1.0), ("office", 1.0), ("shift", 1.0), ("invoice", 1.1)
+            ("work", 1.0), ("office", 1.0), ("shift", 1.0), ("invoice", 1.1),
+            ("email", 1.0), ("snow", 1.2), ("servicenow", 1.3), ("sam", 1.1),
+            ("ham", 1.1), ("itom", 1.3), ("itam", 1.3)
         ]
         let personalKeywords: [(String, Double)] = [
             ("wash", 1.2), ("washing machine", 1.6), ("laundry", 1.3), ("grocer", 1.1), ("shopping", 1.0),
@@ -508,8 +510,7 @@ actor FirebaseSyncService {
             return "sprint\(digits)"
         }
         let lowered = name.lowercased().replacingOccurrences(of: " ", with: "")
-        let base = lowered.hasPrefix("sprint") ? lowered : "sprint\(lowered)"
-        return base
+        return lowered.hasPrefix("sprint") ? lowered : "sprint\(lowered)"
     }
 
     private func parseBobNote(notes: String?) -> (meta: [String: String], userLines: [String]) {
@@ -577,48 +578,116 @@ actor FirebaseSyncService {
             return false
         }
 
-        guard let metadataStart = lines.lastIndex(where: { $0.hasPrefix("BOB:") }) else {
+        // Find ALL metadata blocks (BOB: headers AND orphaned blocks without headers)
+        var allMetadataRanges: [(start: Int, end: Int)] = []
+        var processedLines = Set<Int>()
+        
+        // Pattern 1: Standard blocks starting with "BOB:"
+        for (index, line) in lines.enumerated() where line.hasPrefix("BOB:") && !processedLines.contains(index) {
+            var metadataEnd = index
+            var scanIndex = index + 1
+            while scanIndex < lines.count && !processedLines.contains(scanIndex) {
+                let line = lines[scanIndex]
+                if line.hasPrefix("#") || line.contains("=") || line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
+                    metadataEnd = scanIndex
+                    processedLines.insert(scanIndex)
+                    scanIndex += 1
+                } else {
+                    break
+                }
+            }
+            
+            var prefixStart = index
+            if prefixStart > 0, lines[prefixStart - 1] == "-------" {
+                prefixStart -= 1
+                processedLines.insert(prefixStart)
+                if prefixStart > 0,
+                   lines[prefixStart - 1].trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
+                    prefixStart -= 1
+                    processedLines.insert(prefixStart)
+                }
+            }
+            
+            processedLines.insert(index)
+            allMetadataRanges.append((start: prefixStart, end: metadataEnd))
+            SyncLogService.shared.logEvent(tag: "sync", level: "DEBUG", message: "[PARSE] Found standard metadata block at lines \(prefixStart)-\(metadataEnd)")
+        }
+        
+        // Pattern 2: Orphaned metadata blocks (missing BOB: header) - detect by characteristic key=value pattern
+        let metadataKeys = ["taskRef=", "storyRef=", "goalRef=", "status=", "due=", "synced=", "list=", "sprint=", "theme=", "type="]
+        for (index, line) in lines.enumerated() where !processedLines.contains(index) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Check if this line starts with a known metadata key
+            let isMetadataStart = metadataKeys.contains(where: { trimmed.hasPrefix($0) })
+            if isMetadataStart {
+                // Found potential orphaned metadata block
+                var metadataEnd = index
+                var scanIndex = index + 1
+                while scanIndex < lines.count && !processedLines.contains(scanIndex) {
+                    let scanLine = lines[scanIndex]
+                    let scanTrimmed = scanLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Continue if line has key=value or #key: format
+                    if scanLine.hasPrefix("#") || scanLine.contains("=") || scanTrimmed.isEmpty {
+                        metadataEnd = scanIndex
+                        processedLines.insert(scanIndex)
+                        scanIndex += 1
+                    } else {
+                        break
+                    }
+                }
+                
+                // Check if there's a separator line before
+                var prefixStart = index
+                if prefixStart > 0, lines[prefixStart - 1] == "-------" {
+                    prefixStart -= 1
+                    processedLines.insert(prefixStart)
+                    if prefixStart > 0,
+                       lines[prefixStart - 1].trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
+                        prefixStart -= 1
+                        processedLines.insert(prefixStart)
+                    }
+                }
+                
+                for lineIdx in index...metadataEnd {
+                    processedLines.insert(lineIdx)
+                }
+                allMetadataRanges.append((start: prefixStart, end: metadataEnd))
+                SyncLogService.shared.logEvent(tag: "sync", level: "DEBUG", message: "[PARSE] Found orphaned metadata block at lines \(prefixStart)-\(metadataEnd)")
+            }
+        }
+
+        guard let lastMetadataRange = allMetadataRanges.last else {
             var userLines = lines
             userLines.removeAll(where: isBobLinkLine)
+            SyncLogService.shared.logEvent(tag: "sync", level: "DEBUG", message: "[PARSE] No metadata blocks found in notes")
             return (linkMeta, userLines)
         }
 
-        var metadataEnd = metadataStart
-        var scanIndex = metadataStart + 1
-        while scanIndex < lines.count {
-            let line = lines[scanIndex]
-            if line.hasPrefix("#") || line.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
-                metadataEnd = scanIndex
-                scanIndex += 1
-            } else {
-                break
-            }
-        }
-
-        var prefixEnd = metadataStart
-        if prefixEnd > 0, lines[prefixEnd - 1] == "-------" {
-            prefixEnd -= 1
-            if prefixEnd > 0,
-               lines[prefixEnd - 1].trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty {
-                prefixEnd -= 1
-            }
-        }
-
+        SyncLogService.shared.logEvent(tag: "sync", level: "DEBUG", message: "[PARSE] Total metadata blocks found: \(allMetadataRanges.count), will strip all and extract from last")
+        
+        // Extract user lines by excluding ALL metadata blocks
         var userLines: [String] = []
-        if prefixEnd > 0 {
-            userLines.append(contentsOf: lines[..<prefixEnd])
+        var currentIndex = 0
+        for range in allMetadataRanges {
+            if currentIndex < range.start {
+                userLines.append(contentsOf: lines[currentIndex..<range.start])
+            }
+            currentIndex = range.end + 1
         }
-        if scanIndex < lines.count {
-            userLines.append(contentsOf: lines[scanIndex...])
+        if currentIndex < lines.count {
+            userLines.append(contentsOf: lines[currentIndex...])
         }
 
         userLines.removeAll(where: isBobLinkLine)
 
-        let metadataLines = Array(lines[metadataStart ... metadataEnd])
-        guard let header = metadataLines.first, header.hasPrefix("BOB:") else {
+        // Parse metadata from the LAST block only (most recent)
+        let metadataLines = Array(lines[lastMetadataRange.start ... lastMetadataRange.end])
+        let bobLineIndex = metadataLines.firstIndex(where: { $0.hasPrefix("BOB:") })
+        guard let bobIdx = bobLineIndex, bobIdx < metadataLines.count else {
             return (linkMeta, userLines)
         }
-
+        
+        let header = metadataLines[bobIdx]
         var meta: [String: String] = [:]
         let tokens = header.dropFirst(4).split(separator: " ")
         for token in tokens {
@@ -630,7 +699,7 @@ actor FirebaseSyncService {
             if key == "source" { sourceMarker = value }
         }
 
-        for line in metadataLines.dropFirst() {
+        for line in metadataLines.dropFirst(bobIdx + 1) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty { continue }
             if trimmed.hasPrefix("#") {
@@ -677,13 +746,15 @@ actor FirebaseSyncService {
         }
     }
 
-    private func metadataPreferences() async -> (include: Bool, detail: MetadataDetailLevel) {
-        await MainActor.run {
-            (
-                UserPreferences.shared.showBobMetadataInNotes,
-                UserPreferences.shared.metadataDetailLevel
-            )
+    private func metadataPreferences() -> (includeMetadata: Bool, detailLevel: MetadataDetailLevel) {
+        if let userDefined = UserPreferences.shared.showBobMetadataInNotes as Bool? {
+            // User explicitly overrides the embedded metadata block
+            // However, we still compute detail level for internal logic if needed
+            let level = UserPreferences.shared.metadataDetailLevel
+            return (userDefined, level)
         }
+        // Default to true/full if not set
+        return (true, .full)
     }
 
     private func composeBobNote(
@@ -692,59 +763,79 @@ actor FirebaseSyncService {
         includeMetadataBlock: Bool = true,
         detailLevel: MetadataDetailLevel = .full
     ) -> String {
-        var lines: [String] = []
+        // --- 1. User content (trimmed) ---
+        var userContent: [String] = []
         if !userLines.isEmpty {
-            lines.append(contentsOf: userLines)
+            var trimmed = userLines
+            while let last = trimmed.last, last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                trimmed.removeLast()
+            }
+            userContent = trimmed
         }
 
-        func ensureBlankLineBeforeGeneratedContent() {
-            guard let last = lines.last else { return }
-            if !last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                lines.append("")
+        // --- 2. Deep links ---
+        var deepLinks: [String] = []
+        if let taskRef = meta["taskRef"], !taskRef.isEmpty,
+           let url = taskDeepLink(for: taskRef) {
+            deepLinks.append(url.absoluteString)
+        }
+        if let storyRef = meta["storyRef"], !storyRef.isEmpty,
+           let url = storyDeepLink(for: storyRef) {
+            deepLinks.append(url.absoluteString)
+        }
+        if let parentStoryRef = meta["parentStoryRef"], !parentStoryRef.isEmpty,
+           let url = storyDeepLink(for: parentStoryRef) {
+            deepLinks.append(url.absoluteString)
+        }
+        if let goalRef = meta["goalRef"], !goalRef.isEmpty,
+           let url = goalDeepLink(for: goalRef) {
+            deepLinks.append(url.absoluteString)
+        }
+        if let parentGoalRef = meta["parentGoalRef"], !parentGoalRef.isEmpty,
+           let url = goalDeepLink(for: parentGoalRef) {
+            deepLinks.append(url.absoluteString)
+        }
+        deepLinks = Array(Set(deepLinks)).sorted()
+
+        // --- 3. Tags line (always generated, used in both metadata and no-metadata modes) ---
+        let tagsLine: String? = {
+            guard let tags = meta["tags"], !tags.isEmpty else { return nil }
+            return "#tags: \(tags)"
+        }()
+
+        // --- 4. Metadata block ---
+        func fmtDate(_ raw: String?) -> String? {
+            guard let val = raw, !val.isEmpty else { return nil }
+            if let date = isoFormatter.date(from: val) {
+                let df = DateFormatter()
+                df.dateFormat = "dd-MM-yy HH:mm"
+                df.timeZone = TimeZone.current
+                return df.string(from: date)
             }
+            return val
         }
 
-        func appendDeepLinksIfNeeded() {
-            var links: [String] = []
-            if let taskRef = meta["taskRef"], !taskRef.isEmpty,
-               let url = taskDeepLink(for: taskRef) {
-                links.append(url.absoluteString)
-            }
-            if let storyRef = meta["storyRef"], !storyRef.isEmpty,
-               let url = storyDeepLink(for: storyRef) {
-                links.append(url.absoluteString)
-            }
-            if let goalRef = meta["goalRef"], !goalRef.isEmpty,
-               let url = goalDeepLink(for: goalRef) {
-                links.append(url.absoluteString)
-            }
-            let uniqueLinks = Array(Set(links)).sorted()
-            guard !uniqueLinks.isEmpty else { return }
-            if !lines.isEmpty {
-                ensureBlankLineBeforeGeneratedContent()
-            }
-            lines.append(contentsOf: uniqueLinks)
-        }
+        // --- 5. Assemble: user content, then one blank separator, then all generated content tight ---
+        var lines: [String] = userContent
 
-        appendDeepLinksIfNeeded()
+        // One blank line between user content and generated content (if both exist)
+        var generatedLines: [String] = []
+
+        // Deep links first
+        generatedLines.append(contentsOf: deepLinks)
+
+        // Native hashtag line — always included for Apple Reminders tag detection
+        if let rawTags = meta["tags"], !rawTags.isEmpty {
+            let hashtags = rawTags.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .map { $0.hasPrefix("#") ? $0 : "#\($0)" }
+                .joined(separator: " ")
+            generatedLines.append(hashtags)
+        }
 
         if includeMetadataBlock {
-            if !lines.isEmpty {
-                ensureBlankLineBeforeGeneratedContent()
-            }
-
-            func fmtDate(_ raw: String?) -> String? {
-                guard let val = raw, !val.isEmpty else { return nil }
-                if let date = isoFormatter.date(from: val) {
-                    let df = DateFormatter()
-                    df.dateFormat = "dd-MM-yy HH:mm"
-                    df.timeZone = TimeZone.current
-                    return df.string(from: date)
-                }
-                return val
-            }
-
-            var metadataLines: [String] = ["BOB:"]
+            generatedLines.append("-------")
+            generatedLines.append("BOB:")
             switch detailLevel {
             case .full:
                 let orderedKeys = ["taskRef", "storyRef", "goalRef", "status", "due", "synced", "list"]
@@ -756,44 +847,41 @@ actor FirebaseSyncService {
                         value = meta[key]
                     }
                     if let value, !value.isEmpty {
-                        metadataLines.append("\(key)=\(value)")
+                        generatedLines.append("\(key)=\(value)")
                     }
                 }
-                if let sprint = meta["sprint"], !sprint.isEmpty { metadataLines.append("sprint=\(sprint)") }
-                if let sprintId = meta["sprintId"], !sprintId.isEmpty { metadataLines.append("sprintId=\(sprintId)") }
-                if let theme = meta["theme"], !theme.isEmpty { metadataLines.append("theme=\(theme)") }
-                if let tags = meta["tags"], !tags.isEmpty { metadataLines.append("#tags: \(tags)") }
-                if let source = meta["source"], !source.isEmpty { metadataLines.append("source=\(source)") }
-                if let aiScore = meta["aiScore"], !aiScore.isEmpty { metadataLines.append("#aiScore: \(aiScore)") }
-                if let aiPriorityBucket = meta["aiPriorityBucket"], !aiPriorityBucket.isEmpty { metadataLines.append("#aiPriorityBucket: \(aiPriorityBucket)") }
-                if let aiPriorityRank = meta["aiPriorityRank"], !aiPriorityRank.isEmpty { metadataLines.append("#aiPriorityRank: \(aiPriorityRank)") }
-                if let aiPriorityReason = meta["aiPriorityReason"], !aiPriorityReason.isEmpty { metadataLines.append("#aiPriorityReason: \(aiPriorityReason)") }
-                if let listId = meta["listId"], !listId.isEmpty { metadataLines.append("#listId: \(listId)") }
-                if let listName = meta["list"], !listName.isEmpty { metadataLines.append("#list: \(listName)") }
+                if let sprint = meta["sprint"], !sprint.isEmpty { generatedLines.append("sprint=\(sprint)") }
+                if let sprintId = meta["sprintId"], !sprintId.isEmpty { generatedLines.append("sprintId=\(sprintId)") }
+                if let theme = meta["theme"], !theme.isEmpty { generatedLines.append("theme=\(theme)") }
+                if let tagsLine { generatedLines.append(tagsLine) }
+                if let source = meta["source"], !source.isEmpty { generatedLines.append("source=\(source)") }
+                if let aiScore = meta["aiScore"], !aiScore.isEmpty { generatedLines.append("#aiScore: \(aiScore)") }
+                if let bucket = meta["aiPriorityBucket"], !bucket.isEmpty { generatedLines.append("#aiPriorityBucket: \(bucket)") }
+                if let rank = meta["aiPriorityRank"], !rank.isEmpty { generatedLines.append("#aiPriorityRank: \(rank)") }
+                if let reason = meta["aiPriorityReason"], !reason.isEmpty { generatedLines.append("#aiPriorityReason: \(reason)") }
+                if let listId = meta["listId"], !listId.isEmpty { generatedLines.append("#listId: \(listId)") }
+                if let listName = meta["list"], !listName.isEmpty { generatedLines.append("#list: \(listName)") }
             case .minimal:
-                if let taskRef = meta["taskRef"], !taskRef.isEmpty { metadataLines.append("taskRef=\(taskRef)") }
-                if let storyRef = meta["storyRef"], !storyRef.isEmpty { metadataLines.append("storyRef=\(storyRef)") }
-                if let parentStoryRef = meta["parentStoryRef"], !parentStoryRef.isEmpty {
-                    metadataLines.append("parentStoryRef=\(parentStoryRef)")
-                }
-                if let parentGoalRef = meta["parentGoalRef"], !parentGoalRef.isEmpty {
-                    metadataLines.append("parentGoalRef=\(parentGoalRef)")
-                }
-                if let type = meta["type"], !type.isEmpty { metadataLines.append("type=\(type)") }
-                if let sprint = meta["sprint"], !sprint.isEmpty { metadataLines.append("sprint=\(sprint)") }
-                if let theme = meta["theme"], !theme.isEmpty { metadataLines.append("theme=\(theme)") }
-                if let tags = meta["tags"], !tags.isEmpty { metadataLines.append("#tags: \(tags)") }
-                if let source = meta["source"], !source.isEmpty { metadataLines.append("source=\(source)") }
+                if let taskRef = meta["taskRef"], !taskRef.isEmpty { generatedLines.append("taskRef=\(taskRef)") }
+                if let storyRef = meta["storyRef"], !storyRef.isEmpty { generatedLines.append("storyRef=\(storyRef)") }
+                if let psr = meta["parentStoryRef"], !psr.isEmpty { generatedLines.append("parentStoryRef=\(psr)") }
+                if let pgr = meta["parentGoalRef"], !pgr.isEmpty { generatedLines.append("parentGoalRef=\(pgr)") }
+                if let type = meta["type"], !type.isEmpty { generatedLines.append("type=\(type)") }
+                if let synced = fmtDate(meta["synced"]), !synced.isEmpty { generatedLines.append("synced=\(synced)") }
+                if let sprint = meta["sprint"], !sprint.isEmpty { generatedLines.append("sprint=\(sprint)") }
+                if let theme = meta["theme"], !theme.isEmpty { generatedLines.append("theme=\(theme)") }
+                if let tagsLine { generatedLines.append(tagsLine) }
+                if let source = meta["source"], !source.isEmpty { generatedLines.append("source=\(source)") }
             }
-
-            lines.append("-------")
-            lines.append(contentsOf: metadataLines)
-            return lines.joined(separator: "\n")
+        } else {
+            // No metadata block — native hashtag line above handles tag visibility
         }
 
-        if !lines.isEmpty {
-            ensureBlankLineBeforeGeneratedContent()
+        if !generatedLines.isEmpty {
+            if !lines.isEmpty { lines.append("") } // single blank separator
+            lines.append(contentsOf: generatedLines)
         }
+
         return lines.joined(separator: "\n")
     }
 
@@ -1716,7 +1804,9 @@ actor FirebaseSyncService {
         let reminderTags: [String] = await MainActor.run {
             reminder.rmbCurrentTags().compactMap { tag in
                 let trimmed = tag.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                return trimmed.isEmpty ? nil : trimmed
+                if trimmed.isEmpty { return nil }
+                // Strip leading '#' if present so internal logic uses clean tags
+                return trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
             }
         }
         let workListName = await MainActor.run {
@@ -2288,6 +2378,7 @@ actor FirebaseSyncService {
             )
             // Continue; sync may still proceed
         }
+
         let dryRun = await MainActor.run { UserPreferences.shared.syncDryRun }
         let shouldSyncStories = await MainActor.run { UserPreferences.shared.syncStories }
         var created = 0
@@ -2600,7 +2691,15 @@ actor FirebaseSyncService {
                 if isTop3Today(flag: task.aiTop3ForDay, dateString: task.aiTop3Date) { return true }
                 if let rank = task.aiPriorityRank, rank > 0, rank <= 3 { return true }
                 if task.aiFlaggedTop == true { return true }
-                if hasTop3Tag(task.tags) { return true }
+                if hasTop3Tag(task.tags) {
+                    // Ignore "Top3" tag if the aiTop3Date is explicitly stale (not today).
+                    // This creates a self-healing mechanism where the tag is removed during sync
+                    // if the date indicates it's from a previous day.
+                    if let top3Date = task.aiTop3Date, !top3Date.isEmpty {
+                        return top3Date.prefix(10) == todayIso()
+                    }
+                    return true
+                }
                 return false
             }
 
@@ -2640,6 +2739,9 @@ actor FirebaseSyncService {
 
             let priorityTasks = Array((flaggedTasks.isEmpty ? dueTodayTasks : flaggedTasks).sorted(by: sortTasks).prefix(3))
             let priorityStories = Array((flaggedStories.isEmpty ? dueTodayStories : flaggedStories).sorted(by: sortStories).prefix(3))
+            let storyIdsWithOpenTasks = Set(tasks.filter { !isDone($0.status) }
+                .compactMap(\.storyId)
+                .filter { !$0.isEmpty })
 
             let tasksWithoutReminders = priorityTasks.filter { $0.reminderId == nil && !isDone($0.status) }
             SyncLogService.shared.logEvent(
@@ -2730,6 +2832,15 @@ actor FirebaseSyncService {
                 meta["taskRef"] = taskRefValue
                 meta["list"] = task.reminderListName ?? calendarInfo.name
                 meta["listId"] = task.reminderListId ?? calendarInfo.id
+                // Criticality / AI scoring
+                if let aiScore = task.aiCriticalityScore ?? task.aiPriorityScore {
+                    meta["aiScore"] = String(format: "%.0f", aiScore)
+                }
+                if let aiReason = task.aiCriticalityReason ?? task.aiPriorityReason ?? task.dueDateReason {
+                    meta["aiPriorityReason"] = aiReason
+                }
+                if let bucket = task.aiPriorityBucket { meta["aiPriorityBucket"] = bucket }
+                if let rank = task.aiPriorityRank { meta["aiPriorityRank"] = "\(rank)" }
                 // Compose enriched tags for note (#tags: ...)
                 let baseTags = stripParentTags(task.tags, storyRef: context.storyRef, goalRef: context.goalRef)
                 let prioritizedTags = applyPriorityTags(baseTags, isTop3: isTop3Task, dueToday: isDueTodayTask)
@@ -2738,12 +2849,60 @@ actor FirebaseSyncService {
                 if let taskType = task.type { tagSet.insert(taskType) }
                 if let tname = context.themeName { tagSet.insert(tname) }
                 if let sprintTag = makeSprintTag(from: context.sprintName) { tagSet.insert(sprintTag) }
-                let tagList = Array(tagSet).sorted()
+                // Prioritize & prefix tags with '#' for Reminders visibility
+                let tagList = Array(tagSet).sorted().map { tag in
+                    tag.hasPrefix("#") ? tag : "#\(tag)"
+                }
                 if !tagList.isEmpty { meta["tags"] = tagList.joined(separator: ", ") }
+                
+                // Strip ALL Bob-generated content from user lines so only genuine
+                // human-written notes survive. Metadata is fully rebuilt each cycle.
+                let metaKeyPrefixes = [
+                    "taskRef=", "storyRef=", "goalRef=", "status=", "due=",
+                    "synced=", "list=", "sprint=", "sprintId=", "theme=",
+                    "type=", "source=", "parentStoryRef=", "parentGoalRef=",
+                    "flaggedTop=", "reminderId=", "ownerUid=",
+                    "#tags:", "#listId:", "#list:", "#aiScore:", "#aiReason:",
+                    "#aiPriorityBucket:", "#aiPriorityRank:", "#aiPriorityReason:",
+                    "#aiCriticality:"
+                ]
+                let priorityTags: Set<String> = ["#P1", "#P2", "#P3", "#P4", "#P5"]
+                func isBobGeneratedLine(_ line: String) -> Bool {
+                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty { return false }
+                    // Hashtag-only lines (e.g. "#personal #sprint42")
+                    let tokens = trimmed.split(separator: " ").map(String.init)
+                    if tokens.allSatisfy({ $0.hasPrefix("#") }) { return true }
+                    // Metadata key=value or #key: lines
+                    let lowered = trimmed.lowercased()
+                    if metaKeyPrefixes.contains(where: { lowered.hasPrefix($0.lowercased()) }) { return true }
+                    // Priority tags like #P1
+                    if priorityTags.contains(trimmed) { return true }
+                    // Separator lines
+                    if trimmed == "-------" || trimmed == "BOB:" || trimmed.hasPrefix("BOB: ") { return true }
+                    // Deep link URLs
+                    if lowered.hasPrefix("https://bob.jc1.tech/") { return true }
+                    return false
+                }
+                var cleanedUserLines: [String] = []
+                for line in userLines {
+                    if isBobGeneratedLine(line) { continue }
+                    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Collapse consecutive blank lines into at most one
+                    let lastIsBlank = cleanedUserLines.last?
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? false
+                    if trimmed.isEmpty && lastIsBlank { continue }
+                    cleanedUserLines.append(line)
+                }
+                // Trim trailing blank lines
+                while let last = cleanedUserLines.last,
+                      last.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cleanedUserLines.removeLast()
+                }
 
                 let rebuiltNotes = composeBobNote(
                     meta: meta,
-                    userLines: userLines,
+                    userLines: cleanedUserLines,
                     includeMetadataBlock: includeMetadata,
                     detailLevel: detailLevel
                 )
@@ -2752,16 +2911,28 @@ actor FirebaseSyncService {
                 if !dryRun {
                     await MainActor.run {
                         var needsSave = false
-                        if existingNotes != rebuiltNotes {
+                        let oldNotes = reminder.notes
+                        if oldNotes != rebuiltNotes {
                             reminder.notes = rebuiltNotes
                             needsSave = true
+                            SyncLogService.shared.logEvent(
+                                tag: "sync",
+                                level: "DEBUG",
+                                message: "[\(taskRefValue)] Metadata cleared & rebuilt in notes (oldLen=\(oldNotes?.count ?? 0) newLen=\(rebuiltNotes.count))"
+                            )
                         }
-                        // Ensure URL deep link points to Bob task page using taskRef when available
+                        // Always set URL deep link unconditionally — EKCalendarItem.url
+                        // can silently fail or report stale values, so set every cycle.
                         if let url = linkURL {
-                            if reminder.url != url {
-                                reminder.url = url
-                                needsSave = true
-                            }
+                            let beforeUrl = reminder.url?.absoluteString ?? "<nil>"
+                            reminder.url = url
+                            needsSave = true
+                            let afterUrl = reminder.url?.absoluteString ?? "<nil>"
+                            SyncLogService.shared.logEvent(
+                                tag: "sync",
+                                level: "DEBUG",
+                                message: "[\(taskRefValue)] .url = \(url.absoluteString) (before=\(beforeUrl) after=\(afterUrl))"
+                            )
                         }
                         if let dueMs = effectiveDue {
                             let date = Date(timeIntervalSince1970: dueMs / 1_000.0)
@@ -2770,8 +2941,37 @@ actor FirebaseSyncService {
                                 needsSave = true
                             }
                         }
-                        if includeMetadata, reminder.rmbSetTagsList(newTags: tagList) {
+                        // Always set tags on the reminder, regardless of metadata display preference
+                        if reminder.rmbSetTagsList(newTags: tagList) {
                             needsSave = true
+                            SyncLogService.shared.logEvent(
+                                tag: "sync",
+                                level: "DEBUG",
+                                message: "[\(taskRefValue)] Tags regenerated: \(tagList.joined(separator: ", "))"
+                            )
+                        }
+                        // Sync priority/flag: top3 or aiFlaggedTop → high priority in Reminders
+                        let targetPriority: Int
+                        if isTop3Task || task.aiFlaggedTop == true {
+                            targetPriority = 1 // High (!!!)
+                        } else if let bobPrio = task.priority {
+                            switch bobPrio {
+                            case 1: targetPriority = 1
+                            case 2: targetPriority = 5
+                            case 3: targetPriority = 9
+                            default: targetPriority = 0
+                            }
+                        } else {
+                            targetPriority = 0
+                        }
+                        if reminder.priority != targetPriority {
+                            reminder.priority = targetPriority
+                            needsSave = true
+                            SyncLogService.shared.logEvent(
+                                tag: "sync",
+                                level: "DEBUG",
+                                message: "[\(taskRefValue)] Flag/priority set to \(targetPriority) (top3=\(isTop3Task) flagged=\(task.aiFlaggedTop ?? false))"
+                            )
                         }
                         if needsSave {
                             RemindersService.shared.save(reminder: reminder)
@@ -2782,7 +2982,11 @@ actor FirebaseSyncService {
                 var detailMeta: [String: Any] = [
                     "taskRef": taskRefValue,
                     "status": meta["status"] ?? "unknown",
-                    "calendar": meta["list"] ?? calendarInfo.name
+                    "calendar": meta["list"] ?? calendarInfo.name,
+                    "urlSet": linkURL?.absoluteString ?? "<none>",
+                    "metadataCleared": true,
+                    "userLinesCount": cleanedUserLines.count,
+                    "flagged": isTop3Task || task.aiFlaggedTop == true
                 ]
                 if let due = effectiveDue { detailMeta["due"] = isoString(forMillis: due) }
                 if let storyRef = context.storyRef { detailMeta["storyRef"] = storyRef }
@@ -2790,6 +2994,12 @@ actor FirebaseSyncService {
                 if let theme = context.themeName { detailMeta["theme"] = theme }
                 if let sprint = context.sprintName { detailMeta["sprint"] = sprint }
                 if !tagList.isEmpty { detailMeta["tags"] = tagList }
+                if let aiScore = task.aiCriticalityScore ?? task.aiPriorityScore {
+                    detailMeta["aiScore"] = aiScore
+                }
+                if let aiReason = task.aiCriticalityReason ?? task.aiPriorityReason {
+                    detailMeta["aiReason"] = aiReason
+                }
 
                 SyncLogService.shared.logSyncDetail(
                     direction: .toReminders,
@@ -3077,7 +3287,7 @@ actor FirebaseSyncService {
                     ) == nil { continue }
                 }
 
-                var personaOverride: String? = nil
+                var personaOverride: String?
 
                 // Optional triage classification + routing before import
                 // Goal: If in triage list and judged as work, move to Work list and import as work persona
@@ -3156,15 +3366,13 @@ actor FirebaseSyncService {
                             }
                         }
                         if !dryRun {
-                            if includeMetadataInNotes {
-                                let didTag: Bool = await MainActor.run { reminder.rmbUpdateTag(
-                                    newTag: "work",
-                                    removing: nil
-                                )
-                                }
-                                if didTag {
-                                    await MainActor.run { RemindersService.shared.save(reminder: reminder) }
-                                }
+                            let didTag: Bool = await MainActor.run { reminder.rmbUpdateTag(
+                                newTag: "work",
+                                removing: nil
+                            )
+                            }
+                            if didTag {
+                                await MainActor.run { RemindersService.shared.save(reminder: reminder) }
                             }
                         }
                         let moveMsg = moved ? "moved to ‘\(workListName)’" : "left in triage (no work list configured)"
@@ -3183,7 +3391,7 @@ actor FirebaseSyncService {
                     case .personal:
                         // Allow normal import path; optionally tag for visibility and theme
                         var tagsChanged = false
-                        if !dryRun, includeMetadataInNotes {
+                        if !dryRun {
                             let didTagPersonal: Bool = await MainActor.run { reminder.rmbUpdateTag(
                                 newTag: "personal",
                                 removing: nil
@@ -3242,6 +3450,23 @@ actor FirebaseSyncService {
                 guard task.reminderId != nil else { return false }
                 return expiry <= nowDate
             }
+            // Log tasks pending future deletion (deleteAfter in the future)
+            let pendingDeletionTasks = tasks.filter { task in
+                guard let expiry = task.deleteAfter else { return false }
+                return expiry > nowDate
+            }
+            if !pendingDeletionTasks.isEmpty {
+                for task in pendingDeletionTasks {
+                    let taskRefValue = (task.reference?.isEmpty == false) ? task.reference! : task.id
+                    let daysRemaining = Int(ceil(task.deleteAfter!.timeIntervalSince(nowDate) / 86_400.0))
+                    let side = task.reminderId != nil ? "Reminders" : "Bob"
+                    SyncLogService.shared.logEvent(
+                        tag: "sync",
+                        level: "INFO",
+                        message: "[\(taskRefValue)] Scheduled for deletion from \(side) in \(daysRemaining) day\(daysRemaining == 1 ? "" : "s")"
+                    )
+                }
+            }
             if !expiredTasks.isEmpty {
                 SyncLogService.shared.logEvent(
                     tag: "sync",
@@ -3261,6 +3486,11 @@ actor FirebaseSyncService {
                         await MainActor.run { RemindersService.shared.remove(reminder: reminder) }
                     }
                     meta["removedReminder"] = true
+                    SyncLogService.shared.logEvent(
+                        tag: "sync",
+                        level: "INFO",
+                        message: "[\(taskRefValue)] Deleted from Reminders (deleteAfter elapsed)"
+                    )
                 } else {
                     meta["removedReminder"] = false
                     meta["reason"] = "reminder_not_found"
@@ -3383,7 +3613,7 @@ actor FirebaseSyncService {
 
             for reminder in remindersNeedingImport {
                 do {
-                    var personaOverride: String? = nil
+                    var personaOverride: String?
                     // Pre-import dedupe: try to link to existing task instead of creating a new one
                     let rid = await MainActor.run { reminder.calendarItemIdentifier }
                     let notes = await MainActor.run { reminder.notes }
@@ -3409,6 +3639,8 @@ actor FirebaseSyncService {
                             "serverUpdatedAt": FieldValue.serverTimestamp(),
                             "macSyncedAt": FieldValue.serverTimestamp()
                         ]
+                        // Backfill createdAt if missing on existing task documents
+                        if canonical.createdAt == nil { data["createdAt"] = FieldValue.serverTimestamp() }
                         let titleLower = await MainActor.run { (reminder.title ?? "").lowercased() }
                         let calLower = await MainActor.run { reminder.calendar.title.lowercased() }
                         let tags = await MainActor.run { reminder.rmbCurrentTags().map { $0.lowercased() } }
@@ -3556,6 +3788,8 @@ actor FirebaseSyncService {
                             // Help server-side diagnostics by storing a stable duplicateKey
                             "duplicateKey": "title:\(normTitle)"
                         ]
+                        // Backfill createdAt if missing on existing task documents
+                        if candidate.createdAt == nil { data["createdAt"] = FieldValue.serverTimestamp() }
                         let titleLower = await MainActor.run { (reminder.title ?? "").lowercased() }
                         let tagsLower = reminderTags.map { $0.lowercased() }
                         if titleLower.contains("#story") || calName.lowercased().contains("story") || tagsLower.contains("story") {
@@ -3978,12 +4212,15 @@ actor FirebaseSyncService {
                     guard !dryRun,
                           let saved = RemindersService.shared.createNew(with: reminderToCreate, in: cal)
                     else { return nil }
-                    // Set a complete #tags list rather than repeatedly overwriting
-                    if includeMetadata {
-                        _ = saved.rmbSetTagsList(newTags: tagsForReminder)
-                    }
+                    // Always set tags regardless of metadata display preference
+                    _ = saved.rmbSetTagsList(newTags: tagsForReminder)
                     if let url = taskDeepLink(for: taskRefValue) {
                         saved.url = url
+                        SyncLogService.shared.logEvent(
+                            tag: "sync",
+                            level: "DEBUG",
+                            message: "[\(taskRefValue)] Created reminder with .url=\(url.absoluteString) tags=\(tagsForReminder.joined(separator: ", "))"
+                        )
                     }
                     RemindersService.shared.save(reminder: saved)
                     return saved.calendarItemIdentifier
@@ -4076,7 +4313,11 @@ actor FirebaseSyncService {
 
             // Create reminders for active sprint stories (priority/top 3 only)
             if shouldSyncStories {
-                let storiesToCreate = priorityStories.filter { $0.reminderId == nil && !isStoryDone($0.status) }
+                let storiesToCreate = priorityStories.filter {
+                    $0.reminderId == nil &&
+                        !isStoryDone($0.status) &&
+                        !storyIdsWithOpenTasks.contains($0.id)
+                }
                 if !storiesToCreate.isEmpty {
                     SyncLogService.shared.logEvent(
                         tag: "sync",
@@ -4160,11 +4401,15 @@ actor FirebaseSyncService {
                         guard !dryRun,
                               let saved = RemindersService.shared.createNew(with: storyReminder, in: cal)
                         else { return nil }
-                        if includeMetadata {
-                            _ = saved.rmbSetTagsList(newTags: tagsForReminder)
-                        }
+                        // Always set tags regardless of metadata display preference
+                        _ = saved.rmbSetTagsList(newTags: tagsForReminder)
                         if let url = storyDeepLink(for: storyRef) {
                             saved.url = url
+                            SyncLogService.shared.logEvent(
+                                tag: "sync",
+                                level: "DEBUG",
+                                message: "[\(storyRef)] Created story reminder with .url=\(url.absoluteString) tags=\(tagsForReminder.joined(separator: ", "))"
+                            )
                         }
                         RemindersService.shared.save(reminder: saved)
                         return saved.calendarItemIdentifier
@@ -4266,6 +4511,35 @@ actor FirebaseSyncService {
                 }
                 let rid = reminder.calendarItemIdentifier
                 if let matchedStory = storyByReminderIdLatest[rid] {
+                    if storyIdsWithOpenTasks.contains(matchedStory.id) {
+                        let storyRefValue = (matchedStory.ref?.isEmpty == false)
+                            ? matchedStory.ref!
+                            : "ST-\(matchedStory.id.suffix(6).uppercased())"
+                        if !dryRun {
+                            await MainActor.run {
+                                RemindersService.shared.remove(reminder: reminder)
+                            }
+                        }
+                        skippedMerges.append(SkippedItem(
+                            title: matchedStory.title,
+                            reason: "story_has_open_tasks",
+                            calendar: await MainActor.run { reminder.calendar.title },
+                            tags: await MainActor.run { reminder.rmbCurrentTags() },
+                            due: await MainActor.run { reminder.dueDateComponents?.date }
+                        ))
+                        SyncLogService.shared.logSyncDetail(
+                            direction: .toReminders,
+                            action: "removeStoryReminderForTaskOwnedStory",
+                            taskId: nil,
+                            storyId: matchedStory.id,
+                            metadata: [
+                                "storyRef": storyRefValue,
+                                "reason": "story_has_open_tasks"
+                            ],
+                            dryRun: dryRun
+                        )
+                        continue
+                    }
                     let nowMs = Date().timeIntervalSince1970 * 1_000.0
                     let context = await fetchStoryContext(storyId: matchedStory.id, goalId: nil)
                     let storyRefValue = (matchedStory.ref?.isEmpty == false)
@@ -4525,6 +4799,7 @@ actor FirebaseSyncService {
                 let context = await fetchStoryContext(storyId: task.storyId, goalId: task.goalId)
 
                 let notes = await MainActor.run { reminder.notes }
+                SyncLogService.shared.logEvent(tag: "sync", level: "DEBUG", message: "[FULLSYNC] taskRef=\(task.reference ?? task.id): Parsing notes (length=\(notes?.count ?? 0))")
                 var (meta, userLines) = parseBobNote(notes: notes)
                 let reminderTitle = await MainActor.run { sanitizeTitle(reminder.title) }
                 let reminderCompleted = await MainActor.run { reminder.isCompleted }
@@ -4602,6 +4877,8 @@ actor FirebaseSyncService {
                     if pushData["createdVia"] == nil {
                         pushData["createdVia"] = "mac"
                     }
+                    // Backfill createdAt if missing on existing task documents
+                    if task.createdAt == nil { pushData["createdAt"] = FieldValue.serverTimestamp() }
                     if reminderCompleted && !isStoryOwnedReminder {
                         let nowMs = Date().timeIntervalSince1970 * 1_000.0
                         pushData["completedAt"] = nowMs
@@ -4935,32 +5212,16 @@ actor FirebaseSyncService {
                         reminderChanged = true
                     }
 
-                    // Priority Sync (BOB -> Apple)
+                    // Priority Sync (BOB -> Apple Reminders native priority)
                     let targetApplePrio: Int
-                    let priorityTag: String
                     if task.aiFlaggedTop == true {
                         targetApplePrio = 1
-                        priorityTag = "#P1"
                     } else {
                         switch task.priority ?? 0 {
-                        case 1:
-                            targetApplePrio = 1 // High (!!!)
-                            priorityTag = "#P1"
-                        case 2:
-                            targetApplePrio = 5 // Medium (!!)
-                            priorityTag = "#P2"
-                        case 3:
-                            targetApplePrio = 9 // Low (!)
-                            priorityTag = "#P3"
-                        case 4:
-                            targetApplePrio = 0 // None
-                            priorityTag = "#P4"
-                        case 5:
-                            targetApplePrio = 0 // None
-                            priorityTag = "#P5"
-                        default:
-                            targetApplePrio = 0
-                            priorityTag = ""
+                        case 1: targetApplePrio = 1  // High (!!!)
+                        case 2: targetApplePrio = 5  // Medium (!!)
+                        case 3: targetApplePrio = 9  // Low (!)
+                        default: targetApplePrio = 0 // None
                         }
                     }
 
@@ -4970,38 +5231,6 @@ actor FirebaseSyncService {
                             await MainActor.run { reminder.priority = targetApplePrio }
                         }
                         reminderChanged = true
-                    }
-
-                    // Append Priority Tag to Notes if missing
-                    var currentNotes = await MainActor.run { reminder.notes ?? "" }
-                    if !priorityTag.isEmpty, !currentNotes.contains(priorityTag) {
-                        // Remove old priority tags
-                        currentNotes = currentNotes.replacingOccurrences(of: "#P1", with: "")
-                            .replacingOccurrences(of: "#P2", with: "")
-                            .replacingOccurrences(of: "#P3", with: "")
-                            .replacingOccurrences(of: "#P4", with: "")
-                            .replacingOccurrences(of: "#P5", with: "")
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        let newNotes = currentNotes.isEmpty ? priorityTag : "\(currentNotes)\n\n\(priorityTag)"
-                        if !dryRun {
-                            await MainActor.run { reminder.notes = newNotes }
-                        }
-                        reminderChanged = true
-                    } else if priorityTag.isEmpty {
-                        // Strip any lingering priority tags when clearing priority
-                        let cleaned = currentNotes.replacingOccurrences(of: "#P1", with: "")
-                            .replacingOccurrences(of: "#P2", with: "")
-                            .replacingOccurrences(of: "#P3", with: "")
-                            .replacingOccurrences(of: "#P4", with: "")
-                            .replacingOccurrences(of: "#P5", with: "")
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        if cleaned != currentNotes {
-                            if !dryRun {
-                                await MainActor.run { reminder.notes = cleaned }
-                            }
-                            reminderChanged = true
-                        }
                     }
 
                     meta["status"] = shouldBeCompleted ? "complete" : "open"
@@ -5253,7 +5482,10 @@ actor FirebaseSyncService {
                 if meta != rebuiltMeta { metaChanged = true }
                 meta = rebuiltMeta
 
-                let detailLevel = (await metadataPreferences()).detail
+                let detailLevel = (await metadataPreferences()).detailLevel
+                let composeMsg = "[FULLSYNC] taskRef=\(taskRefValue): Composing notes " +
+                    "(includeMetadata=\(includeMetadataInNotes), detailLevel=\(detailLevel), userLinesCount=\(userLines.count))"
+                SyncLogService.shared.logEvent(tag: "sync", level: "DEBUG", message: composeMsg)
                 let newNotes = composeBobNote(
                     meta: meta,
                     userLines: userLines,
@@ -5265,6 +5497,7 @@ actor FirebaseSyncService {
                         await MainActor.run { reminder.notes = newNotes }
                     }
                     reminderChanged = true
+                    SyncLogService.shared.logEvent(tag: "sync", level: "DEBUG", message: "[FULLSYNC] taskRef=\(taskRefValue): Notes replaced (oldLen=\(notes?.count ?? 0), newLen=\(newNotes.count))")
                 }
                 if !dryRun {
                     await MainActor.run {
@@ -5380,12 +5613,10 @@ actor FirebaseSyncService {
                         // Add convertedtostory tag for conversions
                         if task.convertedToStoryId != nil {
                             meta["tags"] = "convertedtostory"
-                            if includeMetadata {
-                                _ = await MainActor.run { reminder.rmbUpdateTag(
-                                    newTag: "convertedtostory",
-                                    removing: nil
-                                )
-                                }
+                            _ = await MainActor.run { reminder.rmbUpdateTag(
+                                newTag: "convertedtostory",
+                                removing: nil
+                            )
                             }
                         }
                         let newNotes = composeBobNote(
@@ -5407,6 +5638,30 @@ actor FirebaseSyncService {
                     if let storyRef = context.storyRef { completionMeta["storyRef"] = storyRef }
                     if let goalRef = context.goalRef { completionMeta["goalRef"] = goalRef }
                     if task.convertedToStoryId != nil { completionMeta["tags"] = ["convertedtostory"] }
+                    // Log deletion timing for cross-side visibility
+                    if let deleteAfter = task.deleteAfter {
+                        let daysUntil = Int(ceil(deleteAfter.timeIntervalSince(nowDate) / 86_400.0))
+                        if daysUntil > 0 {
+                            completionMeta["deletesIn"] = "\(daysUntil) days"
+                            SyncLogService.shared.logEvent(
+                                tag: "sync",
+                                level: "INFO",
+                                message: "[\(taskRefValue)] Deleted in Bob → marked complete in Reminders, will be removed in \(daysUntil) day\(daysUntil == 1 ? "" : "s")"
+                            )
+                        } else {
+                            SyncLogService.shared.logEvent(
+                                tag: "sync",
+                                level: "INFO",
+                                message: "[\(taskRefValue)] Deleted in Bob → marked complete in Reminders (TTL expired, pending removal)"
+                            )
+                        }
+                    } else {
+                        SyncLogService.shared.logEvent(
+                            tag: "sync",
+                            level: "INFO",
+                            message: "[\(taskRefValue)] Deleted in Bob → marked complete in Reminders"
+                        )
+                    }
                     SyncLogService.shared.logSyncDetail(
                         direction: .toReminders,
                         action: "markCompleteFromBobDelete",

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 
+// swiftlint:disable:next type_body_length
 struct SettingsBarGearMenu: View {
     @EnvironmentObject var remindersData: RemindersData
     @ObservedObject var userPreferences = UserPreferences.shared
@@ -27,12 +28,49 @@ struct SettingsBarGearMenu: View {
                     Divider()
                 }
 
+                // === SYNC CONTROLS ===
+                Button("Full Sync with Bob") {
+                    ManualSyncService.shared.triggerWithMode(reason: "Settings Menu - Full Sync", mode: .full)
+                }
+                .disabled(manualSyncService.isSyncing)
+                
+                Button("Delta Sync with Bob") {
+                    ManualSyncService.shared.triggerWithMode(reason: "Settings Menu - Delta Sync", mode: .delta)
+                }
+                .disabled(manualSyncService.isSyncing)
+
+                Button(action: {
+                    userPreferences.enableBackgroundSync.toggle()
+                    BackgroundSyncService.shared.applyPreference()
+                }) {
+                    SelectableView(
+                        title: "Enable Background Sync",
+                        isSelected: userPreferences.enableBackgroundSync
+                    )
+                }
+
+                Button(action: {
+                    if userPreferences.syncStories {
+                        promptDisableStorySync()
+                    } else {
+                        userPreferences.syncStories = true
+                    }
+                }) {
+                    SelectableView(
+                        title: "Sync Standalone Stories",
+                        isSelected: userPreferences.syncStories
+                    )
+                }
+
+                Divider()
+
+                // === AUTHENTICATION ===
                 Button(action: {
                     FirebaseAuthView.showWindow()
                 }) {
                     Label("Sign In to Bob…", systemImage: "person.crop.circle.badge.checkmark")
                 }
-
+                
                 Button(action: {
                     userPreferences.launchAtLoginIsEnabled.toggle()
                 }) {
@@ -44,43 +82,50 @@ struct SettingsBarGearMenu: View {
                     )
                 }
 
-                Menu("Metadata Detail") {
-                    Button(action: {
-                        userPreferences.showBobMetadataInNotes = false
-                    }) {
-                        SelectableView(
-                            title: "No detail",
-                            isSelected: !userPreferences.showBobMetadataInNotes,
-                            withPadding: false
-                        )
-                    }
+                Divider()
 
-                    Divider()
-
-                    ForEach(MetadataDetailLevel.allCases) { level in
-                        Button(action: {
-                            userPreferences.showBobMetadataInNotes = true
-                            userPreferences.metadataDetailLevel = level
-                        }) {
-                            SelectableView(
-                                title: level.displayName,
-                                isSelected: userPreferences.showBobMetadataInNotes &&
-                                    userPreferences.metadataDetailLevel == level,
-                                withPadding: false
-                            )
-                        }
-                    }
+                // === METADATA DISPLAY OPTIONS (inline) ===
+                Button(action: {
+                    userPreferences.showBobMetadataInNotes = false
+                }) {
+                    SelectableView(
+                        title: "No Metadata in Notes",
+                        isSelected: !userPreferences.showBobMetadataInNotes,
+                        withPadding: false
+                    )
                 }
+
+                Button(action: {
+                    userPreferences.showBobMetadataInNotes = true
+                    userPreferences.metadataDetailLevel = .full
+                }) {
+                    SelectableView(
+                        title: "Full Metadata Detail",
+                        isSelected: userPreferences.showBobMetadataInNotes &&
+                            userPreferences.metadataDetailLevel == .full,
+                        withPadding: false
+                    )
+                }
+                
+                Button(action: {
+                    userPreferences.showBobMetadataInNotes = true
+                    userPreferences.metadataDetailLevel = .minimal
+                }) {
+                    SelectableView(
+                        title: "Minimal Metadata Detail",
+                        isSelected: userPreferences.showBobMetadataInNotes &&
+                            userPreferences.metadataDetailLevel == .minimal,
+                        withPadding: false
+                    )
+                }
+
+                Divider()
 
                 visualCustomizationOptions()
 
                 Divider()
 
-                Button("Sync with Bob") {
-                    ManualSyncService.shared.trigger(reason: "Settings Menu")
-                }
-                .disabled(manualSyncService.isSyncing)
-
+                // === LOGS & MAINTENANCE ===
                 Button("Open Sync Log") {
                     SyncLogService.shared.revealLogInFinder()
                 }
@@ -89,112 +134,55 @@ struct SettingsBarGearMenu: View {
                     SyncLogService.shared.openLogsFolder()
                 }
 
-                Divider()
-                // Background sync controls
-                Button(action: {
-                    userPreferences.enableBackgroundSync.toggle()
-                    BackgroundSyncService.shared.applyPreference()
-                }) {
-                    SelectableView(
-                        title: "Enable Background Sync",
-                        isSelected: userPreferences.enableBackgroundSync
-                    )
+                Button("Mark Duplicates Complete (TTL)") {
+                    Task {
+                        let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: false)
+                        if let err = res.error {
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                            }
+                        } else {
+                            let msg = "Completed \(res.deleted) duplicates across \(res.groups) groups"
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: msg)
+                            }
+                        }
+                    }
+                }
+                
+                Button("Delete Duplicates Now (Hard Delete)") {
+                    Task {
+                        let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: true)
+                        if let err = res.error {
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                            }
+                        } else {
+                            let msg = "Deleted \(res.deleted) duplicates across \(res.groups) groups"
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: msg)
+                            }
+                        }
+                    }
                 }
 
-                Menu("Background Sync Interval") {
-                    ForEach([15, 30, 60, 120, 240], id: \.self) { minutes in
-                        Button(action: {
-                            userPreferences.backgroundSyncIntervalMinutes = minutes
-                            if userPreferences.enableBackgroundSync {
-                                BackgroundSyncService.shared.applyPreference()
-                            }
-                        }) {
-                            SelectableView(
-                                title: "Every \(minutes) min",
-                                isSelected: userPreferences.backgroundSyncIntervalMinutes == minutes
-                            )
-                        }
-                    }
-                }
-
-                Button(action: {
-                    if userPreferences.syncStories {
-                        promptDisableStorySync()
-                    } else {
-                        userPreferences.syncStories = true
-                    }
-                }) {
-                    SelectableView(
-                        title: "Sync Stories",
-                        isSelected: userPreferences.syncStories
-                    )
-                }
-
-                Divider()
-                // Duplicate maintenance
-                Menu("Duplicates") {
-                    Button("Mark Duplicates Complete (TTL)") {
-                        Task {
-                            let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: false)
-                            if let err = res.error {
-                                SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                await MainActor.run {
-                                    SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
-                                }
-                            } else {
-                                let msg = "Completed \(res.deleted) duplicates across \(res.groups) groups"
-                                SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                await MainActor.run {
-                                    SyncFeedbackService.shared.show(message: msg)
-                                }
-                            }
-                        }
-                    }
-                    Button("Diagnose Duplicates (Debug)") {
-                        Task {
-                            let diag = await FirebaseSyncService.shared.diagnoseDuplicates()
-                            if let err = diag.error {
-                                SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                await MainActor.run {
-                                    SyncFeedbackService.shared.show(message: "Diagnose error: \(err)")
-                                }
-                            } else {
-                                let msg = "Diagnosed \(diag.processed) tasks, groups: key=\(diag.keyGroups) rid=\(diag.ridGroups)"
-                                SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                await MainActor.run {
-                                    SyncFeedbackService.shared.show(message: msg)
-                                }
-                            }
-                        }
-                    }
-                    Button("Delete Duplicates Now (Hard Delete)") {
-                        Task {
-                            let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: true)
-                            if let err = res.error {
-                                SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                await MainActor.run {
-                                    SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
-                                }
-                            } else {
-                                let msg = "Deleted \(res.deleted) duplicates across \(res.groups) groups"
-                                SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                await MainActor.run {
-                                    SyncFeedbackService.shared.show(message: msg)
-                                }
-                            }
-                        }
-                    }
-                }
                 Button(action: { userPreferences.syncDryRun.toggle() }) {
                     SelectableView(title: "Dry-Run Mode (no writes)", isSelected: userPreferences.syncDryRun)
                 }
-                // Theme → List Mapping removed; handled via tags
+                
                 if let summary = UserPreferences.shared.lastSyncSummary, !summary.isEmpty {
                     Divider()
                     Text("Last Sync: \(summary)")
                         .font(.footnote)
                 }
 
+                Divider()
+                
+                // === SHORTCUTS & TOOLS ===
                 Button {
                     KeyboardShortcutView.showWindow()
                 } label: {
@@ -301,7 +289,7 @@ struct SettingsBarGearMenu: View {
             ForEach(RmbIcon.allCases, id: \.self) { icon in
                 Button(action: {
                     userPreferences.reminderMenuBarIcon = icon
-                    AppDelegate.shared.loadMenuBarIcon()
+                    AppDelegate.shared?.loadMenuBarIcon()
                 }) {
                     Image(nsImage: icon.image)
                     Text(icon.name)
@@ -367,7 +355,8 @@ struct SettingsBarGearMenu: View {
     private func promptDisableStorySync() {
         let alert = NSAlert()
         alert.messageText = "Turn off Story Sync?"
-        alert.informativeText = "Disabling story sync stops new story reminders. You can also remove existing story reminders from Reminders."
+        alert.informativeText = "Disabling story sync stops new story reminders. " +
+            "You can also remove existing story reminders from Reminders."
         alert.addButton(withTitle: "Turn Off Only")
         alert.addButton(withTitle: "Turn Off & Remove Story Reminders")
         alert.addButton(withTitle: "Cancel")

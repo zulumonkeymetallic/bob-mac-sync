@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class SyncFeedbackService: ObservableObject {
     static let shared = SyncFeedbackService()
+
     private init() {}
 
     @Published var toastMessage: String?

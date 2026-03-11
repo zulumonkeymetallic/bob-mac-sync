@@ -21,7 +21,7 @@ struct RemindersMenuBar: App {
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
-    private(set) static var shared: AppDelegate!
+    private(set) static var shared: AppDelegate?
 
     private var didCloseCancellationToken: AnyCancellable?
     private var didCloseEventDate = Date.distantPast
@@ -54,10 +54,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     #if canImport(GoogleSignIn)
     func application(_: NSApplication, open urls: [URL]) {
-        for url in urls {
-            if GIDSignIn.sharedInstance.handle(url) {
-                break
-            }
+        for url in urls where GIDSignIn.sharedInstance.handle(url) {
+            break
         }
     }
     #endif
@@ -162,7 +160,8 @@ extension AppDelegate: NSAlertDelegate {
                 let status = RemindersService.shared.authorizationStatus()
                 var helpfulMessage = errorMessage
                 if #available(macOS 14.0, *), status == .writeOnly {
-                    helpfulMessage = "macOS granted write-only access. Open System Settings → Privacy & Security → Reminders and change Reminders MenuBar to Allow Full Access."
+                    helpfulMessage = "macOS granted write-only access. Open System Settings -> " +
+                        "Privacy & Security -> Reminders and change Reminders MenuBar to Allow Full Access."
                 }
                 print(
                     "Access to reminders not granted:",

@@ -4,7 +4,7 @@ import FirebaseAuth
 #endif
 
 struct FirebaseAuthView: View {
-    @ObservedObject var fb = FirebaseManager.shared
+    @ObservedObject var firebaseManager = FirebaseManager.shared
     @State private var customToken: String = ""
     @State private var message: String = ""
     @State private var busy: Bool = false
@@ -19,7 +19,7 @@ struct FirebaseAuthView: View {
                     .foregroundColor(.secondary)
             }
 
-            if let user = fb.currentUser {
+            if let user = firebaseManager.currentUser {
                 let email = user.email ?? "anonymous"
                 Text("Signed in as \(email) (uid: \(user.uid))").font(.footnote).foregroundColor(.secondary)
             } else {
@@ -60,25 +60,27 @@ struct FirebaseAuthView: View {
         }
         .padding(16)
         .frame(width: 560)
-        .onAppear { fb.configureIfNeeded() }
+        .onAppear { firebaseManager.configureIfNeeded() }
     }
 
     private func signOutAll() {
         do {
-            logAuthUI(level: "INFO", message: "Sign out triggered from auth window")
-            fb.googleSignOut()
-            try fb.signOut()
-            logAuthUI(level: "INFO", message: "Sign out completed from auth window")
+            logAuthUI(message: "Sign out triggered from auth window", level: "INFO")
+            firebaseManager.googleSignOut()
+            try firebaseManager.signOut()
+            logAuthUI(message: "Sign out completed from auth window", level: "INFO")
             message = "Signed out"
         } catch { message = describe(error, context: "Sign out") }
     }
 
     private func signInAnon() async {
         busy = true; defer { busy = false }
-        do { try await fb.signInAnonymously(); message = "Signed in anonymously" } catch { message = describe(
-            error,
-            context: "Anonymous sign-in"
-        ) }
+        do {
+            try await firebaseManager.signInAnonymously()
+            message = "Signed in anonymously"
+        } catch {
+            message = describe(error, context: "Anonymous sign-in")
+        }
     }
 
     private func signInWithToken() async {
@@ -88,7 +90,7 @@ struct FirebaseAuthView: View {
             message = "Custom token is empty."; return
         }
         do {
-            try await fb.signIn(withCustomToken: token)
+            try await firebaseManager.signIn(withCustomToken: token)
             await MainActor.run { customToken = "" }
             message = "Signed in"
         } catch { message = describe(error, context: "Custom token sign-in") }
@@ -96,16 +98,16 @@ struct FirebaseAuthView: View {
 
     private func signInGoogle() async {
         busy = true; defer { busy = false }
-        logAuthUI(level: "DEBUG", message: "UI starting Google sign-in (hasKeyWindow=\(NSApp.keyWindow != nil))")
+        logAuthUI(message: "UI starting Google sign-in (hasKeyWindow=\(NSApp.keyWindow != nil))", level: "DEBUG")
         guard let window = NSApp.keyWindow else {
             let msg = "No active window to present Google Sign-In"
-            logAuthUI(level: "ERROR", message: "Cannot present Google Sign-In: \(msg)")
+            logAuthUI(message: "Cannot present Google Sign-In: \(msg)", level: "ERROR")
             message = msg
             return
         }
         do {
-            try await fb.signInWithGoogle(presenting: window)
-            logAuthUI(level: "INFO", message: "Google sign-in completed from UI; waiting on Firebase exchange")
+            try await firebaseManager.signInWithGoogle(presenting: window)
+            logAuthUI(message: "Google sign-in completed from UI; waiting on Firebase exchange", level: "INFO")
             message = "Signed in with Google"
         } catch { message = describe(error, context: "Google sign-in") }
     }
@@ -142,7 +144,7 @@ struct FirebaseAuthView: View {
         }
         #endif
         let logMessage = ([context + ": " + payload] + debugParts).joined(separator: " | ")
-        logAuthUI(level: "ERROR", message: logMessage)
+        logAuthUI(message: logMessage, level: "ERROR")
         return payload
     }
 
@@ -166,7 +168,7 @@ struct FirebaseAuthView_Previews: PreviewProvider {
 }
 
 extension FirebaseAuthView {
-    private func logAuthUI(level: String = "DEBUG", message: String) {
+    private func logAuthUI(message: String, level: String = "DEBUG") {
         SyncLogService.shared.logEvent(
             tag: "auth",
             level: level,

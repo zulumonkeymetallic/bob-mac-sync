@@ -214,6 +214,24 @@ extension EKReminder {
         return []
     }
 
+    private func rmbApplyTagLine(meta: inout [String], newLine: String?) -> Bool {
+        let tagIndex = meta.firstIndex(where: { $0.hasPrefix("#tags:") })
+        switch (tagIndex, newLine) {
+        case let (.some(index), .some(line)):
+            guard meta[index] != line else { return false }
+            meta[index] = line
+            return true
+        case let (.some(index), .none):
+            meta.remove(at: index)
+            return true
+        case (.none, .some(let line)):
+            meta.append(line)
+            return true
+        case (.none, .none):
+            return false
+        }
+    }
+
     @MainActor
     @discardableResult
     func rmbSetTagsList(newTags: [String]) -> Bool {
@@ -221,9 +239,13 @@ extension EKReminder {
         var seen = Set<String>()
         let desiredList = newTags.compactMap { raw -> String? in
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty { return nil }
+            if trimmed.isEmpty {
+                return nil
+            }
             let key = trimmed.lowercased()
-            if seen.contains(key) { return nil }
+            if seen.contains(key) {
+                return nil
+            }
             seen.insert(key)
             return trimmed
         }
@@ -233,26 +255,11 @@ extension EKReminder {
         var lines = originalNotes.components(separatedBy: "\n")
         if let sepIndex = lines.lastIndex(of: "-------") {
             var meta = Array(lines.suffix(from: sepIndex + 1))
-            var head = meta.first ?? "BOB:"
-            if !head.hasPrefix("BOB:") {
-                head = "BOB:"
-                meta.insert(head, at: 0)
+            if meta.first?.hasPrefix("BOB:") != true {
+                meta.insert("BOB:", at: 0)
             }
-            let tagIdx = meta.firstIndex(where: { $0.hasPrefix("#tags:") })
             let newLine = desired.isEmpty ? nil : "#tags: \(desired)"
-            var changed = false
-            if let idx = tagIdx {
-                if let newLine {
-                    if meta[idx] != newLine { meta[idx] = newLine; changed = true }
-                } else {
-                    meta.remove(at: idx)
-                    changed = true
-                }
-            } else if let newLine {
-                meta.append(newLine)
-                changed = true
-            }
-            if changed {
+            if rmbApplyTagLine(meta: &meta, newLine: newLine) {
                 let prefix = Array(lines.prefix(upTo: sepIndex + 1))
                 let rebuilt = prefix + meta
                 notes = rebuilt.joined(separator: "\n")

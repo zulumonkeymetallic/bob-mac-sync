@@ -26,8 +26,6 @@ class AppUpdateCheckHelper: ObservableObject {
                 return
             }
 
-            // TODO: Prefer receive(on:options:) over explicit use of dispatch queues.
-            // https://developer.apple.com/documentation/combine/fail/receive(on:options:)
             DispatchQueue.main.async {
                 self.isOutdated = self.currentRelease < latestRelease
             }

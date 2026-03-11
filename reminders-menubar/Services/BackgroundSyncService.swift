@@ -7,6 +7,7 @@ import FirebaseAuth
 @MainActor
 final class BackgroundSyncService: ObservableObject {
     static let shared = BackgroundSyncService()
+
     private init() {}
 
     private var scheduler: NSBackgroundActivityScheduler?
@@ -41,7 +42,12 @@ final class BackgroundSyncService: ObservableObject {
                     let now = Date()
                     let lastFull = await MainActor.run { UserPreferences.shared.lastFullSyncDate }
                     let sixHours: TimeInterval = 6 * 60 * 60
-                    let doFull = (lastFull == nil) || (now.timeIntervalSince(lastFull!) >= sixHours)
+                    let doFull: Bool
+                    if let fullSyncDate = lastFull {
+                        doFull = now.timeIntervalSince(fullSyncDate) >= sixHours
+                    } else {
+                        doFull = true
+                    }
                     let mode: FirebaseSyncService.SyncMode = doFull ? .full : .delta
                     _ = await FirebaseSyncService.shared.syncNow(targetCalendar: nil, mode: mode)
                 }
@@ -61,11 +67,17 @@ final class BackgroundSyncService: ObservableObject {
 @MainActor
 final class ManualSyncService: ObservableObject {
     static let shared = ManualSyncService()
+
     private init() {}
 
     @Published private(set) var isSyncing = false
 
     func trigger(reason: String, showToast: Bool = true) {
+        triggerWithMode(reason: reason, mode: .full, showToast: showToast)
+    }
+    
+    // swiftlint:disable:next function_body_length
+    func triggerWithMode(reason: String, mode: FirebaseSyncService.SyncMode, showToast: Bool = true) {
         guard let delegate = AppDelegate.shared else {
             SyncLogService.shared.logEvent(
                 tag: "sync",
@@ -99,10 +111,11 @@ final class ManualSyncService: ObservableObject {
 
         isSyncing = true
         let calendar = delegate.remindersData.calendarForSaving
+        let modeStr = mode == .full ? "Full" : "Delta"
 
         Task { [weak self] in
-            SyncLogService.shared.logEvent(tag: "sync", level: "INFO", message: "Manual sync started (\(reason))")
-            let result = await FirebaseSyncService.shared.syncNow(targetCalendar: calendar, mode: .full)
+            SyncLogService.shared.logEvent(tag: "sync", level: "INFO", message: "\(modeStr) sync started (\(reason))")
+            let result = await FirebaseSyncService.shared.syncNow(targetCalendar: calendar, mode: mode)
             await delegate.remindersData.update()
 
             if !result.errors.isEmpty {
@@ -110,18 +123,19 @@ final class ManualSyncService: ObservableObject {
                 SyncLogService.shared.logEvent(
                     tag: "sync",
                     level: "ERROR",
-                    message: "Manual sync finished with \(result.errors.count) errors (\(reason)): \(joined)"
+                    message: "\(modeStr) sync finished with \(result.errors.count) errors (\(reason)): \(joined)"
                 )
             } else {
                 SyncLogService.shared.logEvent(
                     tag: "sync",
                     level: "INFO",
-                    message: "Manual sync finished successfully (\(reason)) created=\(result.created) updated=\(result.updated)"
+                    message: "\(modeStr) sync finished successfully (\(reason)) " +
+                        "created=\(result.created) updated=\(result.updated)"
                 )
             }
 
             if showToast {
-                let toast = "Sync: +\(result.created) ↺\(result.updated) ⚠︎\(result.errors.count)"
+                let toast = "\(modeStr) Sync: +\(result.created) ↺\(result.updated) ⚠︎\(result.errors.count)"
                 await MainActor.run { SyncFeedbackService.shared.show(message: toast) }
             }
 

@@ -1,0 +1,25 @@
+#!/bin/bash
+# build - Simple BOB multi-repo build orchestrator
+
+MASTER="/Users/jim/GitHub/bob/orchestrate-build.sh"
+
+[ ! -f "$MASTER" ] && echo "❌ Master build script not found" && exit 1
+
+if [ $# -eq 0 ]; then
+    echo "BOB Build - Multi-Repo Orchestrator"; echo ""
+    echo "Usage: ./build [target] [options]"; echo ""
+    echo "Targets: all | web | ios | mac"
+    echo "Options: --dry-run, --version X.X.X, --beta"
+    echo ""
+    echo "Examples: ./build all  |  ./build web --dry-run"
+    exit 0
+fi
+
+TARGET="$1"; shift
+
+case "$TARGET" in
+    all|web|ios|mac) set -- "--$TARGET" "$@" ;;
+    *) set -- "$TARGET" "$@" ;;
+esac
+
+"$MASTER" "$@"

@@ -9,8 +9,10 @@ enum MetadataDetailLevel: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .full: return "Full metadata"
-        case .minimal: return "Minimal metadata"
+        case .full:
+            return "Full metadata"
+        case .minimal:
+            return "Minimal metadata"
         }
     }
 }
@@ -55,6 +57,7 @@ private enum PreferencesKeys {
     static let staySignedIn = "staySignedIn"
 }
 
+// swiftlint:disable:next type_body_length
 class UserPreferences: ObservableObject {
     private(set) static var shared = UserPreferences()
 
@@ -177,7 +180,11 @@ class UserPreferences: ObservableObject {
             if #available(macOS 13.0, *) {
                 let service = SMAppService.loginItem(identifier: AppConstants.launcherBundleId)
                 do {
-                    if newValue { try service.register() } else { try service.unregister() }
+                    if newValue {
+                        try service.register()
+                    } else {
+                        try service.unregister()
+                    }
                 } catch {
                     // As a fallback, attempt legacy API if available
                     SMLoginItemSetEnabled(AppConstants.launcherBundleId as CFString, newValue)
@@ -271,9 +278,9 @@ class UserPreferences: ObservableObject {
     // Timestamp of the last full sync (6-hour cadence)
     @Published var lastFullSyncDate: Date? = {
         guard defaults.object(forKey: PreferencesKeys.lastFullSyncDate) != nil else { return nil }
-        let ts = defaults.double(forKey: PreferencesKeys.lastFullSyncDate)
-        guard ts > 0 else { return nil }
-        return Date(timeIntervalSince1970: ts)
+        let timestamp = defaults.double(forKey: PreferencesKeys.lastFullSyncDate)
+        guard timestamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
     }() {
         didSet {
             if let date = lastFullSyncDate {
@@ -287,9 +294,9 @@ class UserPreferences: ObservableObject {
     // Timestamp of the last delta sync (hourly cadence)
     @Published var lastDeltaSyncDate: Date? = {
         guard defaults.object(forKey: PreferencesKeys.lastDeltaSyncDate) != nil else { return nil }
-        let ts = defaults.double(forKey: PreferencesKeys.lastDeltaSyncDate)
-        guard ts > 0 else { return nil }
-        return Date(timeIntervalSince1970: ts)
+        let timestamp = defaults.double(forKey: PreferencesKeys.lastDeltaSyncDate)
+        guard timestamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
     }() {
         didSet {
             if let date = lastDeltaSyncDate {
