@@ -4788,6 +4788,10 @@ actor FirebaseSyncService {
                     "persona": personaValue,
                     "tags": mergedTags
                 ]
+                if staleTop3 {
+                    data["aiTop3ForDay"] = false
+                    data["aiTop3Date"] = FieldValue.delete()
+                }
                 if let dueDate {
                     data["dueDate"] = dueDate.timeIntervalSince1970 * 1_000.0
                 } else {
