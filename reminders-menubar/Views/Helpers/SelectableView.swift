@@ -5,35 +5,35 @@ struct SelectableView: View {
     var isSelected: Bool
     var color: Color?
     var withPadding: Bool
-    
+
     init(title: String, isSelected: Bool, color: Color? = nil, withPadding: Bool = true) {
         self.title = title
         self.isSelected = isSelected
         self.color = color
         self.withPadding = withPadding
     }
-    
+
     init(title: String, color: Color) {
         self.title = title
         self.color = color
-        self.isSelected = false
-        self.withPadding = false
+        isSelected = false
+        withPadding = false
     }
-    
+
     var body: some View {
         if isSelected {
             Image(systemName: "checkmark")
         } else if withPadding {
             Image(.empty)
         }
-        
+
         let coloredDot = color != nil
             ? Text(verbatim: "●  ").foregroundColor(color)
             : Text(verbatim: "")
-        
+
         Group {
             coloredDot +
-            Text(title)
+                Text(title)
         }
     }
 }

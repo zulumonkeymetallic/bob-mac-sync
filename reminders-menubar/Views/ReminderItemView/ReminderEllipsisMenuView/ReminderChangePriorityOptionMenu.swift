@@ -1,5 +1,5 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct ReminderChangePriorityOptionMenu: View {
     var reminder: EKReminder

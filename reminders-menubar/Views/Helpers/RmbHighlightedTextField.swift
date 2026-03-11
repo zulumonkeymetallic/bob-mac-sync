@@ -119,7 +119,7 @@ struct RmbHighlightedTextField: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        return Coordinator(self)
+        Coordinator(self)
     }
 
     class Coordinator: NSObject, NSTextViewDelegate, NSTextDelegate {
@@ -140,7 +140,8 @@ struct RmbHighlightedTextField: NSViewRepresentable {
             }
 
             guard commandSelector == #selector(NSResponder.insertNewline(_:)),
-                  !textView.string.isEmpty else {
+                  !textView.string.isEmpty
+            else {
                 return false
             }
 
@@ -153,15 +154,15 @@ struct RmbHighlightedTextField: NSViewRepresentable {
         }
 
         func textView(
-            _ textView: NSTextView,
-            shouldChangeTextIn affectedCharRange: NSRange,
+            _: NSTextView,
+            shouldChangeTextIn _: NSRange,
             replacementString: String?
         ) -> Bool {
             guard let replacementString else {
                 return true
             }
 
-            if !parent.allowNewLineAndTab && (replacementString == "\n" || replacementString == "\t") {
+            if !parent.allowNewLineAndTab, replacementString == "\n" || replacementString == "\t" {
                 return false
             }
 
@@ -195,9 +196,9 @@ struct RmbHighlightedTextField: NSViewRepresentable {
 
         func textView(
             _ textView: NSTextView,
-            completions words: [String],
+            completions _: [String],
             forPartialWordRange charRange: NSRange,
-            indexOfSelectedItem index: UnsafeMutablePointer<Int>?
+            indexOfSelectedItem _: UnsafeMutablePointer<Int>?
         ) -> [String] {
             guard let autoCompleteSuggestions = parent.autoCompleteSuggestions else {
                 return []
@@ -205,7 +206,8 @@ struct RmbHighlightedTextField: NSViewRepresentable {
 
             let typingWord = textView.string.substring(in: charRange)
             guard !typingWord.isEmpty,
-                  isValidToAutocomplete(textView.string, charRange: charRange) else {
+                  isValidToAutocomplete(textView.string, charRange: charRange)
+            else {
                 return []
             }
 
@@ -221,7 +223,7 @@ struct RmbHighlightedTextField: NSViewRepresentable {
             let beforeInitialChar = string[safe: charRange.lowerBound - 2]
 
             return isInitialCharValidToAutoComplete(initialChar)
-            && (beforeInitialChar == " " || beforeInitialChar == nil)
+                && (beforeInitialChar == " " || beforeInitialChar == nil)
         }
     }
 }
@@ -255,7 +257,7 @@ private class PlaceholderNSTextView: NSTextView {
     var shouldFocus: Bool = false
 
     override func draw(_ rect: CGRect) {
-        if string.isEmpty && !placeholder.isEmpty {
+        if string.isEmpty, !placeholder.isEmpty {
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: font ?? .systemFont(ofSize: NSFont.systemFontSize),
                 .foregroundColor: NSColor.secondaryLabelColor

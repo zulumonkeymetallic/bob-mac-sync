@@ -5,6 +5,25 @@
    <BuildAction
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES">
+      <PostActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Export Build To iCloud"
+               scriptText = "set -eo pipefail&#10;BASE_DIR=&quot;/Users/jim/Library/Mobile Documents/com~apple~CloudDocs/bobmacsync&quot;&#10;TIMESTAMP=&quot;$(/bin/date +%Y-%m-%d_%H-%M-%S)&quot;&#10;DEST_DIR=&quot;${BASE_DIR}/${TIMESTAMP}&quot;&#10;SOURCE_APP=&quot;${BUILT_PRODUCTS_DIR}/${FULL_PRODUCT_NAME}&quot;&#10;if [ ! -d &quot;${SOURCE_APP}&quot; ]; then&#10;  echo &quot;warning: Build output not found at ${SOURCE_APP}&quot;&#10;  exit 0&#10;fi&#10;/bin/mkdir -p &quot;${DEST_DIR}&quot;&#10;/usr/bin/ditto &quot;${SOURCE_APP}&quot; &quot;${DEST_DIR}/${FULL_PRODUCT_NAME}&quot;&#10;echo &quot;✓ Exported build to ${DEST_DIR}/${FULL_PRODUCT_NAME}&quot;&#10;APP_SIZE=$(/usr/bin/du -sh &quot;${DEST_DIR}/${FULL_PRODUCT_NAME}&quot; | /usr/bin/cut -f1)&#10;echo &quot;✓ App size: ${APP_SIZE} (dSYM debug symbols excluded)&quot;"
+               shellToInvoke = "/bin/sh">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "712C32AF24BF939100AC75E2"
+                     BuildableName = "Reminders MenuBar.app"
+                     BlueprintName = "Reminders MenuBar"
+                     ReferencedContainer = "container:reminders-menubar.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PostActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"

@@ -5,17 +5,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         defer {
             NSApp.terminate(self)
         }
-        
+
         guard NSRunningApplication.runningApplications(withBundleIdentifier: AppConstants.mainBundleId).isEmpty else {
             // main app is already running
             return
         }
-        
+
         guard let appUrl = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppConstants.mainBundleId) else {
             // could not found URL for the main app
             return
         }
-        
+
         let group = DispatchGroup()
         group.enter()
         NSWorkspace.shared.openApplication(
@@ -25,7 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 group.leave()
             }
         )
-        
+
         _ = group.wait(timeout: .distantFuture)
     }
 }

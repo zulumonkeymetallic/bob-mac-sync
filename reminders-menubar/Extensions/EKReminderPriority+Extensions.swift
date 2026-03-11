@@ -4,26 +4,26 @@ extension EKReminderPriority {
     var systemImage: String? {
         switch self {
         case .high:
-            return "exclamationmark.3"
+            "exclamationmark.3"
         case .medium:
-            return "exclamationmark.2"
+            "exclamationmark.2"
         case .low:
-            return "exclamationmark"
+            "exclamationmark"
         default:
-            return nil
+            nil
         }
     }
-    
+
     var nextPriority: EKReminderPriority {
         switch self {
         case .low:
-            return .medium
+            .medium
         case .medium:
-            return .high
+            .high
         case .high:
-            return .none
+            .none
         default:
-            return .low
+            .low
         }
     }
 }

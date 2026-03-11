@@ -2,30 +2,30 @@ import Foundation
 
 extension Date {
     var isPast: Bool {
-        return self.timeIntervalSinceNow < 0
+        timeIntervalSinceNow < 0
     }
-    
+
     var isToday: Bool {
-        return Calendar.current.isDateInToday(self)
+        Calendar.current.isDateInToday(self)
     }
-    
+
     var isYesterday: Bool {
-        return Calendar.current.isDateInYesterday(self)
+        Calendar.current.isDateInYesterday(self)
     }
-    
+
     var isDayBeforeYesterday: Bool {
         let dayBeforeYesterday = Calendar.current.date(byAdding: .day, value: -2, to: Date()) ?? self
-        return self.isSameDay(as: dayBeforeYesterday)
+        return isSameDay(as: dayBeforeYesterday)
     }
-                                                                   
+
     var isThisYear: Bool {
-        return Calendar.current.isDate(self, equalTo: Date(), toGranularity: .year)
+        Calendar.current.isDate(self, equalTo: Date(), toGranularity: .year)
     }
-    
+
     var elapsedTimeInterval: TimeInterval {
-        return Date().timeIntervalSince(self)
+        Date().timeIntervalSince(self)
     }
-    
+
     static func nextExactHour(of date: Date = Date(), allowDayChange: Bool = false) -> Date {
         let calendar = Calendar.current
         let now = Date()
@@ -40,25 +40,25 @@ extension Date {
         guard let dateWithoutTime = calendar.date(bySettingHour: 0, minute: 0, second: 0, of: date) else { return date }
         return calendar.date(byAdding: hourComponent, to: dateWithoutTime) ?? dateWithoutTime
     }
-    
+
     static func nextYear(of date: Date = Date()) -> Date {
-        return Calendar.current.date(byAdding: .year, value: 1, to: date) ?? date
+        Calendar.current.date(byAdding: .year, value: 1, to: date) ?? date
     }
-    
+
     func isSameDay(as otherDate: Date) -> Bool {
-        return Calendar.current.isDate(self, inSameDayAs: otherDate)
+        Calendar.current.isDate(self, inSameDayAs: otherDate)
     }
-    
+
     func relativeDateDescription(withTime showTimeDescription: Bool) -> String {
         let relativeDateFormatter = DateFormatter()
         relativeDateFormatter.timeStyle = showTimeDescription ? .short : .none
         relativeDateFormatter.dateStyle = .medium
         relativeDateFormatter.locale = rmbCurrentLocale()
         relativeDateFormatter.doesRelativeDateFormatting = true
-        
+
         return relativeDateFormatter.string(from: self)
     }
-    
+
     func dateComponents(withTime: Bool) -> DateComponents {
         var components: Set<Calendar.Component> = [.calendar, .era, .year, .month, .day]
         if withTime {

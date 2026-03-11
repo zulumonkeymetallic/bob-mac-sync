@@ -1,26 +1,26 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct NoReminderItemsView: View {
     enum EmptyListType {
         case noReminders
         case allItemsCompleted
         case noUpcomingReminders
-        
+
         var message: String {
             switch self {
             case .noReminders:
-                return rmbLocalized(.emptyListNoRemindersMessage)
+                rmbLocalized(.emptyListNoRemindersMessage)
             case .allItemsCompleted:
-                return rmbLocalized(.emptyListAllItemsCompletedMessage)
+                rmbLocalized(.emptyListAllItemsCompletedMessage)
             case .noUpcomingReminders:
-                return rmbLocalized(.emptyListNoUpcomingRemindersMessage)
+                rmbLocalized(.emptyListNoUpcomingRemindersMessage)
             }
         }
     }
-    
+
     var emptyList: EmptyListType
-    
+
     var body: some View {
         HStack(alignment: .center) {
             Image(systemName: "tray")

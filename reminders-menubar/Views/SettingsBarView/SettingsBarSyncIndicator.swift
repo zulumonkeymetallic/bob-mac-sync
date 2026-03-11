@@ -16,7 +16,8 @@ struct SettingsBarSyncIndicator: View {
             Button {
                 manualSyncService.trigger(reason: "Toolbar Icon")
             } label: {
-                Image(systemName: manualSyncService.isSyncing ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath.circle")
+                Image(systemName: manualSyncService
+                        .isSyncing ? "arrow.triangle.2.circlepath.circle.fill" : "arrow.triangle.2.circlepath.circle")
                     .foregroundColor(manualSyncService.isSyncing ? .accentColor : .secondary)
             }
             .buttonStyle(.plain)

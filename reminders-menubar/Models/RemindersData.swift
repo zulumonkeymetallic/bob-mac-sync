@@ -1,6 +1,6 @@
-import SwiftUI
 import Combine
 import EventKit
+import SwiftUI
 
 @MainActor
 class RemindersData: ObservableObject {
@@ -13,6 +13,7 @@ class RemindersData: ObservableObject {
         }
     }
 
+    // swiftlint:disable:next function_body_length
     private func addObservers() {
         NotificationCenter.default.publisher(for: .EKEventStoreChanged)
             .sink { [weak self] _ in
@@ -35,17 +36,17 @@ class RemindersData: ObservableObject {
             .sink { [weak self] _ in
                 Task {
                     guard let self else { return }
-                    self.updateMenuBarCount(with: await self.getMenuBarCount())
+                    await self.updateMenuBarCount(with: self.getMenuBarCount())
                 }
             }
             .store(in: &cancellationTokens)
-        
+
         UserPreferences.shared.$filterMenuBarCountByCalendar
             .dropFirst()
             .sink { [weak self] _ in
                 Task {
                     guard let self else { return }
-                    self.updateMenuBarCount(with: await self.getMenuBarCount())
+                    await self.updateMenuBarCount(with: self.getMenuBarCount())
                 }
             }
             .store(in: &cancellationTokens)
@@ -80,7 +81,7 @@ class RemindersData: ObservableObject {
                     )
 
                     self.upcomingReminders = await self.getUpcomingReminders()
-                    self.updateMenuBarCount(with: await self.getMenuBarCount())
+                    await self.updateMenuBarCount(with: self.getMenuBarCount())
                 }
             }
             .store(in: &cancellationTokens)
@@ -96,7 +97,7 @@ class RemindersData: ObservableObject {
         guard let identifiers = UserPreferences.shared.preferredCalendarIdentifiersFilter else {
             // NOTE: On first use it will load all reminder lists.
             let allCalendars = RemindersService.shared.getCalendars()
-            return allCalendars.map({ $0.calendarIdentifier })
+            return allCalendars.map(\.calendarIdentifier)
         }
 
         return identifiers
@@ -112,7 +113,8 @@ class RemindersData: ObservableObject {
         }
 
         guard let identifier = UserPreferences.shared.preferredCalendarIdentifierForSaving,
-              let calendar = RemindersService.shared.getCalendar(withIdentifier: identifier) else {
+              let calendar = RemindersService.shared.getCalendar(withIdentifier: identifier)
+        else {
             return RemindersService.shared.getDefaultCalendar()
         }
 
@@ -127,21 +129,21 @@ class RemindersData: ObservableObject {
     func update() async {
         let calendars = RemindersService.shared.getCalendars()
 
-        let calendarsSet = Set(calendars.map({ $0.calendarIdentifier }))
-        let calendarIdentifiersFilter = self.calendarIdentifiersFilter.filter({
+        let calendarsSet = Set(calendars.map(\.calendarIdentifier))
+        let calendarIdentifiersFilter = calendarIdentifiersFilter.filter {
             // NOTE: Checking if calendar in filter still exist
             calendarsSet.contains($0)
-        })
+        }
 
         self.calendars = calendars
         self.calendarIdentifiersFilter = calendarIdentifiersFilter
-        self.upcomingReminders = await getUpcomingReminders()
-        self.updateMenuBarCount(with: await getMenuBarCount())
+        upcomingReminders = await getUpcomingReminders()
+        await updateMenuBarCount(with: getMenuBarCount())
     }
-    
+
     private func getUpcomingReminders() async -> [ReminderItem] {
         let calendarFilter = UserPreferences.shared.filterUpcomingRemindersByCalendar
-            ? self.calendarIdentifiersFilter
+            ? calendarIdentifiersFilter
             : nil
 
         return await RemindersService.shared.getUpcomingReminders(
@@ -152,9 +154,9 @@ class RemindersData: ObservableObject {
 
     private func getMenuBarCount() async -> Int {
         let calendarFilter = UserPreferences.shared.filterMenuBarCountByCalendar
-            ? self.calendarIdentifiersFilter
+            ? calendarIdentifiersFilter
             : nil
-        
+
         switch UserPreferences.shared.menuBarCounterType {
         case .due:
             return await RemindersService.shared.getUpcomingReminders(.due, for: calendarFilter).count
@@ -168,6 +170,6 @@ class RemindersData: ObservableObject {
     }
 
     private func updateMenuBarCount(with count: Int) {
-        AppDelegate.shared.updateMenuBarTodayCount(to: count)
+        AppDelegate.shared?.updateMenuBarTodayCount(to: count)
     }
 }

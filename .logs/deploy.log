@@ -1,0 +1,29 @@
+[2026-03-10 17:23:17] ═══════════════════════════════════════════════════════════
+[2026-03-10 17:23:17] Starting 7-day automated build & deploy cycle
+[2026-03-10 17:23:17] ═══════════════════════════════════════════════════════════
+[2026-03-10 17:23:17] Step 1: Removing builds older than 7 days to prevent signing conflicts...
+[2026-03-10 17:23:17]   ✓ Cleaned old builds
+[2026-03-10 17:23:17] Step 2: Building signed app...
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Building Reminders MenuBar (Release)
+Team ID: J877BRYKD6
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Cleaning build folder and derived data...
+Clean complete.
+
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -scheme "Reminders MenuBar" -configuration Release -derivedDataPath ./build_out -destination platform=macOS,arch=arm64 DEVELOPMENT_TEAM=J877BRYKD6 CODE_SIGN_STYLE=Automatic "CODE_SIGN_IDENTITY=Apple Development" CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES DEBUG_INFORMATION_FORMAT=dwarf-with-dsym
+
+Build settings from command line:
+    CODE_SIGN_IDENTITY = Apple Development
+    CODE_SIGN_STYLE = Automatic
+    CODE_SIGNING_ALLOWED = YES
+    CODE_SIGNING_REQUIRED = YES
+    DEBUG_INFORMATION_FORMAT = dwarf-with-dsym
+    DEVELOPMENT_TEAM = J877BRYKD6
+
+2026-03-10 17:23:18.642 xcodebuild[13632:76760] Writing error result bundle to /var/folders/__/r9w5f3b17sn2b3_jv6rtqw540000gn/T/ResultBundle_2026-10-03_17-23-0018.xcresult
+xcodebuild: error: The directory / does not contain an Xcode project, workspace or package.
+
+[2026-03-10 17:23:18] ❌ Build failed

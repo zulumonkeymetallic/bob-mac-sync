@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct AboutView: View { 
+struct AboutView: View {
     var body: some View {
         HStack(alignment: .center) {
             Image(nsImage: NSApp.applicationIconImage)
@@ -10,13 +10,15 @@ struct AboutView: View {
                 .padding(16)
                 .padding(.horizontal, 6)
                 .padding(.bottom, 22)
-            
+
             VStack(alignment: .leading, spacing: 8) {
                 VStack(alignment: .leading) {
                     Text(AppConstants.appName)
                         .font(Font.title.weight(.thin))
                     Text(rmbLocalized(.appVersionDescription, arguments: AppConstants.currentVersion))
                         .font(Font.callout.weight(.light))
+                    Text("Built: \(AppConstants.buildDate)")
+                        .font(Font.caption.weight(.light))
                 }
                 .padding(.bottom, 4)
 
@@ -31,7 +33,7 @@ struct AboutView: View {
                 }
                 .font(.system(size: 11))
                 .frame(maxHeight: .infinity)
-                
+
                 Button(action: {
                     if let url = URL(string: GithubConstants.repositoryPage) {
                         NSWorkspace.shared.open(url)
@@ -46,11 +48,11 @@ struct AboutView: View {
         .padding(.horizontal, 16)
         .frame(width: 525, height: 200)
     }
-    
+
     static func showWindow() {
         let viewController = NSHostingController(rootView: AboutView())
         let windowController = NSWindowController(window: NSWindow(contentViewController: viewController))
-        
+
         if let window = windowController.window {
             window.title = rmbLocalized(.aboutRemindersMenuBarWindowTitle, arguments: AppConstants.appName)
             window.titleVisibility = .hidden
@@ -58,7 +60,7 @@ struct AboutView: View {
             window.animationBehavior = .alertPanel
             window.styleMask = [.titled, .closable]
         }
-        
+
         windowController.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

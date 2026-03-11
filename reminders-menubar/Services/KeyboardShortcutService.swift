@@ -1,5 +1,5 @@
-import SwiftUI
 import KeyboardShortcuts
+import SwiftUI
 
 extension KeyboardShortcuts.Name {
     static let openRemindersMenuBar = Self("OpenRemindersMenuBar", default: .init(.r, modifiers: [.command, .option]))
@@ -14,16 +14,15 @@ private enum ShortcutsKeys {
 @MainActor
 class KeyboardShortcutService: ObservableObject {
     static let shared = KeyboardShortcutService()
-    
+
     private init() {
         // This prevents others from using the default '()' initializer for this class.
     }
-    
+
     private static let defaults = UserDefaults.standard
-    
-    @Published var isOpenRemindersMenuBarEnabled: Bool = {
-        return defaults.bool(forKey: ShortcutsKeys.isOpenRemindersMenuBarEnabled)
-    }() {
+
+    @Published var isOpenRemindersMenuBarEnabled: Bool = defaults
+    .bool(forKey: ShortcutsKeys.isOpenRemindersMenuBarEnabled) {
         didSet {
             KeyboardShortcutService.defaults.set(
                 isOpenRemindersMenuBarEnabled,
@@ -47,15 +46,15 @@ class KeyboardShortcutService: ObservableObject {
             setEnabled(isRunBobSyncEnabled, for: .runBobSync)
         }
     }
-    
+
     func activeShortcut(for shortcutName: KeyboardShortcuts.Name) -> String {
         guard isEnabled(shortcutName) else {
             return ""
         }
-        
+
         return KeyboardShortcuts.Shortcut(name: shortcutName)?.description ?? ""
     }
-    
+
     func action(for shortcutName: KeyboardShortcuts.Name, action: @escaping () -> Void) {
         KeyboardShortcuts.onKeyDown(for: shortcutName) {
             action()
@@ -63,22 +62,22 @@ class KeyboardShortcutService: ObservableObject {
         let isEnabled = isEnabled(shortcutName)
         setEnabled(isEnabled, for: shortcutName)
     }
-    
+
     func reset(_ shortcutName: KeyboardShortcuts.Name) {
         KeyboardShortcuts.reset(shortcutName)
     }
-    
+
     private func isEnabled(_ shortcutName: KeyboardShortcuts.Name) -> Bool {
         switch shortcutName {
         case .openRemindersMenuBar:
-            return isOpenRemindersMenuBarEnabled
+            isOpenRemindersMenuBarEnabled
         case .runBobSync:
-            return isRunBobSyncEnabled
+            isRunBobSyncEnabled
         default:
-            return false
+            false
         }
     }
-    
+
     private func setEnabled(_ isEnabled: Bool, for shortcutName: KeyboardShortcuts.Name) {
         if isEnabled {
             KeyboardShortcuts.enable(shortcutName)

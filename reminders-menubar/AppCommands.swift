@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct AppCommands: Commands {
@@ -6,10 +7,20 @@ struct AppCommands: Commands {
 
     @CommandsBuilder var body: some Commands {
         CommandMenu(Text(verbatim: "Bob")) {
-            Button("Sync with Bob") { ManualSyncService.shared.trigger(reason: "Command Menu") }
+            Button("Full Sync with Bob") {
+                ManualSyncService.shared.triggerWithMode(reason: "Command Menu - Full Sync", mode: .full)
+            }
                 .keyboardShortcut(KeyEquivalent("s"), modifiers: [.command, .shift])
                 .disabled(manualSyncService.isSyncing)
 
+            Button("Delta Sync with Bob") {
+                ManualSyncService.shared.triggerWithMode(reason: "Command Menu - Delta Sync", mode: .delta)
+            }
+                .keyboardShortcut(KeyEquivalent("d"), modifiers: [.command, .shift])
+                .disabled(manualSyncService.isSyncing)
+
+            Divider()
+            
             Button("Sign In to Bob…") { FirebaseAuthView.showWindow() }
                 .keyboardShortcut(KeyEquivalent("b"), modifiers: [.command, .option])
 
@@ -26,14 +37,68 @@ struct AppCommands: Commands {
                 Text("Show Bob Metadata in Notes")
             }
 
+            Toggle(isOn: Binding(
+                get: { prefs.syncStories },
+                set: { newValue in
+                    if newValue == false && prefs.syncStories {
+                        let alert = NSAlert()
+                        alert.messageText = "Turn off Story Sync?"
+                        alert.informativeText = "Existing story reminders can be removed from Reminders."
+                        alert.addButton(withTitle: "Turn Off Only")
+                        alert.addButton(withTitle: "Turn Off & Remove Story Reminders")
+                        alert.addButton(withTitle: "Cancel")
+                        let response = alert.runModal()
+                        switch response {
+                        case .alertFirstButtonReturn:
+                            prefs.syncStories = false
+                        case .alertSecondButtonReturn:
+                            prefs.syncStories = false
+                            Task {
+                                let result = await FirebaseSyncService.shared.removeStoryRemindersFromReminders()
+                                SyncLogService.shared.logEvent(
+                                    tag: "sync",
+                                    level: "INFO",
+                                    message: "Story reminders removed: \(result.removed) (skipped \(result.skipped))"
+                                )
+                            }
+                        default:
+                            break
+                        }
+                    } else {
+                        prefs.syncStories = newValue
+                    }
+                }
+            )) {
+                Text("Sync Stories")
+            }
+
+            Menu("Metadata Detail") {
+                ForEach(MetadataDetailLevel.allCases) { level in
+                    Button(action: { prefs.metadataDetailLevel = level }) {
+                        SelectableView(
+                            title: level.displayName,
+                            isSelected: prefs.metadataDetailLevel == level,
+                            withPadding: false
+                        )
+                    }
+                }
+            }
+
             // Delete all duplicates action
             Button("Delete All Duplicates…") {
                 Task {
                     let result = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: true)
-                    let msg = result.error == nil ?
-                        "Deleted \(result.deleted) duplicates across \(result.groups) groups" :
-                        "Delete duplicates failed: \(result.error!)"
-                    SyncLogService.shared.logEvent(tag: "dedupe", level: result.error == nil ? "INFO" : "ERROR", message: msg)
+                    let msg: String
+                    if let error = result.error {
+                        msg = "Delete duplicates failed: \(error)"
+                    } else {
+                        msg = "Deleted \(result.deleted) duplicates across \(result.groups) groups"
+                    }
+                    SyncLogService.shared.logEvent(
+                        tag: "dedupe",
+                        level: result.error == nil ? "INFO" : "ERROR",
+                        message: msg
+                    )
                 }
             }
 
@@ -52,35 +117,35 @@ struct AppCommands: Commands {
                     Text(verbatim: "Select All")
                 }
                 .keyboardShortcut(KeyEquivalent("a"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Cut")
                 }
                 .keyboardShortcut(KeyEquivalent("x"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Copy")
                 }
                 .keyboardShortcut(KeyEquivalent("c"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Paste")
                 }
                 .keyboardShortcut(KeyEquivalent("v"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(Selector(("undo:")), to: nil, from: nil)
                 } label: {
                     Text(verbatim: "Undo")
                 }
                 .keyboardShortcut(KeyEquivalent("z"), modifiers: .command)
-                
+
                 Button {
                     NSApp.sendAction(Selector(("redo:")), to: nil, from: nil)
                 } label: {

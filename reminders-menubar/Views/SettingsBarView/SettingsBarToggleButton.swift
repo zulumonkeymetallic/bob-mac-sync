@@ -3,9 +3,9 @@ import SwiftUI
 struct SettingsBarToggleButton: View {
     @ObservedObject var userPreferences = UserPreferences.shared
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    
+
     @State var toggleIsHovered = false
-    
+
     var body: some View {
         Button(action: {
             userPreferences.showUncompletedOnly.toggle()

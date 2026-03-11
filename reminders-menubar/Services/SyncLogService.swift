@@ -5,13 +5,13 @@ import os.log
 import AppKit
 #endif
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
-import FirebaseFirestore
 import FirebaseAuth
+import FirebaseFirestore
 #endif
 
 class SyncLogService {
     static let shared = SyncLogService()
-    
+
     private init() {}
 
     enum SyncDirection: String {
@@ -25,21 +25,25 @@ class SyncLogService {
     private let pruneLock = NSLock()
     private var hasPrunedLogsThisLaunch = false
 
-    private func pruneOldLogsIfNeeded(in directory: URL) {
+    private func pruneOldLogs(in directory: URL, force: Bool = false) {
         pruneLock.lock()
         defer { pruneLock.unlock() }
-        guard !hasPrunedLogsThisLaunch else { return }
-        hasPrunedLogsThisLaunch = true
+        if !force {
+            guard !hasPrunedLogsThisLaunch else { return }
+            hasPrunedLogsThisLaunch = true
+        }
         let fileManager = FileManager.default
         guard let urls = try? fileManager.contentsOfDirectory(
             at: directory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey],
+            includingPropertiesForKeys: [.contentModificationDateKey, .creationDateKey, .isRegularFileKey],
             options: [.skipsHiddenFiles]
         ) else { return }
-        let logFiles = urls.filter { $0.pathExtension == "log" }
         let cutoff = Date().addingTimeInterval(-retentionInterval)
-        for url in logFiles {
-            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
+        for url in urls {
+            let values = try? url.resourceValues(
+                forKeys: [.contentModificationDateKey, .creationDateKey, .isRegularFileKey]
+            )
+            guard values?.isRegularFile ?? true else { continue }
             let mdate = values?.contentModificationDate ?? values?.creationDate ?? Date.distantPast
             if mdate < cutoff {
                 try? fileManager.removeItem(at: url)
@@ -47,14 +51,25 @@ class SyncLogService {
         }
     }
 
-    private func logFileURL(filename: String = "sync.log") -> URL? {
+    private func logsDirectoryURL() -> URL? {
         guard let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return nil }
         let logsDir = lib.appendingPathComponent("Logs").appendingPathComponent("RemindersMenuBar", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
         } catch { return nil }
-        pruneOldLogsIfNeeded(in: logsDir)
+        return logsDir
+    }
+
+    private func logFileURL(filename: String = "sync.log") -> URL? {
+        guard let logsDir = logsDirectoryURL() else { return nil }
+        pruneOldLogs(in: logsDir)
         return logsDir.appendingPathComponent(filename)
+    }
+
+    // Called at sync start so old files are cleaned even during long-running app sessions.
+    func pruneOldLogsNow() {
+        guard let logsDir = logsDirectoryURL() else { return }
+        pruneOldLogs(in: logsDir, force: true)
     }
 
     private func rotateIfNeeded(_ url: URL) {
@@ -209,7 +224,10 @@ class SyncLogService {
 
     func openLogsFolder() {
         guard let lib = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else { return }
-        let logsDir = lib.appendingPathComponent("Logs").appendingPathComponent("RemindersMenuBar", isDirectory: true)
+        let logsDir = lib.appendingPathComponent("Logs").appendingPathComponent(
+            "RemindersMenuBar",
+            isDirectory: true
+        )
         NSWorkspace.shared.open(logsDir)
         NSApp.activate(ignoringOtherApps: true)
     }

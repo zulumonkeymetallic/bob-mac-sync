@@ -3,13 +3,27 @@ import Foundation
 enum AppConstants {
     static let currentVersion: String = {
         guard let bundleVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
-              let buildVersion = Bundle.main.infoDictionary?["CFBundleVersion"] as? String else {
+              let buildVersion = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        else {
             return "-"
         }
 
         return "v\(bundleVersion) (build: \(buildVersion))"
     }()
-    
+
+    static let buildDate: String = {
+        guard let executableURL = Bundle.main.executableURL,
+              let values = try? executableURL.resourceValues(forKeys: [.contentModificationDateKey]),
+              let buildDate = values.contentModificationDate
+        else {
+            return "Unknown"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy 'at' h:mm a"
+        formatter.timeZone = TimeZone.current
+        return formatter.string(from: buildDate)
+    }()
+
     static let appName = "Reminders MenuBar"
     static let mainBundleId = "com.jc1.tech.bob"
     static let launcherBundleId = "com.jc1.tech"

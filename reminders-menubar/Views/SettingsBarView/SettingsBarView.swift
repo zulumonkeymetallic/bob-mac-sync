@@ -1,20 +1,20 @@
-import SwiftUI
 import EventKit
 import Foundation
+import SwiftUI
 #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
-import FirebaseFirestore
 import FirebaseAuth
+import FirebaseFirestore
 #endif
 
 struct SettingsBarView: View {
     var body: some View {
         HStack {
             SettingsBarFilterMenu()
-            
+
             Spacer()
-            
+
             SettingsBarToggleButton()
-            
+
             // Keep sync indicator to the left, then show counts right next to the gear
             SettingsBarSyncIndicator()
             SettingsBarCountsView()
@@ -29,6 +29,7 @@ struct SettingsBarView: View {
 
 final class OpenCountsModel: ObservableObject {
     static let shared = OpenCountsModel()
+
     private init() {}
 
     @Published var bobOpenCount: Int = 0
@@ -40,12 +41,12 @@ final class OpenCountsModel: ObservableObject {
         #if canImport(FirebaseFirestore) && canImport(FirebaseAuth)
         async let bob = Self.countOpenBobTasks()
         let (reminders, bobTasks) = await (rem, bob)
-        self.remindersOpenCount = reminders
-        self.bobOpenCount = bobTasks
+        remindersOpenCount = reminders
+        bobOpenCount = bobTasks
         #else
         let reminders = await Self.countOpenReminders()
-        self.remindersOpenCount = reminders
-        self.bobOpenCount = 0
+        remindersOpenCount = reminders
+        bobOpenCount = 0
         #endif
     }
 
@@ -63,15 +64,25 @@ final class OpenCountsModel: ObservableObject {
         guard let db = FirebaseManager.shared.firestore, let user = Auth.auth().currentUser else { return 0 }
         do {
             var total = 0
-            let qNum = db.collection("tasks").whereField("ownerUid", isEqualTo: user.uid).whereField("status", isEqualTo: 0).limit(to: 10000)
+            let qNum = db.collection("tasks")
+                .whereField("ownerUid", isEqualTo: user.uid)
+                .whereField("status", isEqualTo: 0)
+                .limit(to: 10_000)
             let snapNum = try await qNum.getDocuments()
             total += snapNum.documents.filter { ($0.data()["deleted"] as? Bool) != true }.count
-            let qStr = db.collection("tasks").whereField("ownerUid", isEqualTo: user.uid).whereField("status", isEqualTo: "open").limit(to: 10000)
+            let qStr = db.collection("tasks")
+                .whereField("ownerUid", isEqualTo: user.uid)
+                .whereField("status", isEqualTo: "open")
+                .limit(to: 10_000)
             let snapStr = try await qStr.getDocuments()
             total += snapStr.documents.filter { ($0.data()["deleted"] as? Bool) != true }.count
             return total
         } catch {
-            SyncLogService.shared.logEvent(tag: "counts", level: "ERROR", message: "Open counts failed: \(error.localizedDescription)")
+            SyncLogService.shared.logEvent(
+                tag: "counts",
+                level: "ERROR",
+                message: "Open counts failed: \(error.localizedDescription)"
+            )
             return 0
         }
     }

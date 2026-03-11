@@ -7,9 +7,10 @@ import Security
 #endif
 
 #if canImport(FirebaseCore)
-import FirebaseCore
 import FirebaseAuth
+import FirebaseCore
 import FirebaseFirestore
+
 // Optional Google Sign-In (SPM: GoogleSignIn)
 #if canImport(GoogleSignIn)
 import GoogleSignIn
@@ -27,6 +28,7 @@ class FirebaseManager: ObservableObject {
     // Short name 'db' is common, but prefer a clearer name
     var firestore: Firestore?
 
+    // swiftlint:disable:next function_default_parameter_at_end
     private func logAuthEvent(level: String = "DEBUG", _ message: String) {
         SyncLogService.shared.logEvent(
             tag: "auth",
@@ -50,15 +52,13 @@ class FirebaseManager: ObservableObject {
         for key in entitlementKeys {
             if let entGroups = entitlementValue(for: key) as? [String],
                let first = entGroups.first,
-               !first.isEmpty {
+               !first.isEmpty,
+               !first.contains("$(") {
                 return first
             }
         }
-        let bundleId = Bundle.main.bundleIdentifier ?? "?"
-        if let prefix = Bundle.main.infoDictionary?["AppIdentifierPrefix"] as? String {
-            return "\(prefix)\(bundleId)"
-        }
-        return bundleId
+        // Do not synthesize access groups from unresolved build placeholders.
+        return nil
     }
 
     private func keychainAccessGroupHint() -> String {
@@ -104,9 +104,16 @@ class FirebaseManager: ObservableObject {
         guard !isConfigured else { return }
         logAuthEvent(
             level: "INFO",
-            "Configuring Firebase (bundle=\(Bundle.main.bundleIdentifier ?? "?") keychainGroup=\(keychainAccessGroupHint()))"
+            "Configuring Firebase (bundle=\(Bundle.main.bundleIdentifier ?? "?")) " +
+                "keychainGroup=\(keychainAccessGroupHint())"
         )
         FirebaseApp.configure()
+        do {
+            try Auth.auth().useUserAccessGroup(nil)
+            logAuthEvent(level: "DEBUG", "Firebase Auth keychain group reset to default")
+        } catch {
+            logAuthFailure(error, context: "Reset Firebase Auth keychain group")
+        }
         if let accessGroup = resolvedKeychainAccessGroup() {
             do {
                 try Auth.auth().useUserAccessGroup(accessGroup)
@@ -129,10 +136,11 @@ class FirebaseManager: ObservableObject {
             guard let self else { return }
             let email = user?.email ?? "nil"
             let uid = user?.uid ?? "nil"
-            let providerIds = user?.providerData.map { $0.providerID }.joined(separator: ",") ?? "none"
-            self.logAuthEvent(
+            let providerIds = user?.providerData.map(\.providerID).joined(separator: ",") ?? "none"
+            logAuthEvent(
                 level: "DEBUG",
-                "Auth state changed uid=\(uid) email=\(email) isAnonymous=\(user?.isAnonymous ?? false) providers=\(providerIds)"
+                "Auth state changed uid=\(uid) email=\(email) " +
+                    "isAnonymous=\(user?.isAnonymous ?? false) providers=\(providerIds)"
             )
             DispatchQueue.main.async { self.currentUser = user }
         }
@@ -145,7 +153,10 @@ class FirebaseManager: ObservableObject {
         do {
             let result = try await Auth.auth().signIn(withCustomToken: token)
             let user = result.user
-            logAuthEvent(level: "INFO", "Custom token sign-in succeeded uid=\(user.uid) email=\(user.email ?? "nil")")
+            logAuthEvent(
+                level: "INFO",
+                "Custom token sign-in succeeded uid=\(user.uid) email=\(user.email ?? "nil")"
+            )
         } catch {
             logAuthFailure(error, context: "Custom token sign-in")
             throw error
@@ -177,10 +188,11 @@ class FirebaseManager: ObservableObject {
 
     #if canImport(GoogleSignIn)
     @MainActor
-    func signInWithGoogle(presenting window: NSWindow) async throws {
+    func signInWithGoogle(presenting window: NSWindow) async throws { // swiftlint:disable:this function_body_length
         logAuthEvent(
             level: "INFO",
-            "Starting Google Sign-In (windowKey=\(window.isKeyWindow) visible=\(window.isVisible) keychainGroup=\(keychainAccessGroupHint()))"
+            "Starting Google Sign-In (windowKey=\(window.isKeyWindow) visible=\(window.isVisible)) " +
+                "keychainGroup=\(keychainAccessGroupHint())"
         )
         configureIfNeeded()
         // Prefer new API; fallback to configuration if required
@@ -212,7 +224,9 @@ class FirebaseManager: ObservableObject {
         let scopes = googleUser.grantedScopes?.joined(separator: ",") ?? "none"
         let email = googleUser.profile?.email ?? "unknown"
         let userId = googleUser.userID ?? "nil"
-        let tokenDetails = "\(tokenSummary(googleUser.accessToken, label: "access")) \(tokenSummary(googleUser.idToken, label: "id"))"
+        let tokenDetails =
+            "\(tokenSummary(googleUser.accessToken, label: "access")) " +
+            "\(tokenSummary(googleUser.idToken, label: "id"))"
         logAuthEvent(
             level: "INFO",
             "Google flow finished email=\(email) userId=\(userId) scopes=\(scopes) \(tokenDetails)"
@@ -236,18 +250,40 @@ class FirebaseManager: ObservableObject {
         let accessToken = googleUser.accessToken.tokenString
         logAuthEvent(
             level: "DEBUG",
-            "Preparing Firebase credential (idTokenLength=\(idToken.count) accessTokenLength=\(accessToken.count))"
+            "Preparing Firebase credential (idTokenLength=\(idToken.count) " +
+                "accessTokenLength=\(accessToken.count))"
         )
         let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
         do {
             let authData = try await Auth.auth().signIn(with: credential)
             let user = authData.user
-            let providers = user.providerData.map { $0.providerID }.joined(separator: ",")
+            let providers = user.providerData.map(\.providerID).joined(separator: ",")
             logAuthEvent(
                 level: "INFO",
-                "Firebase sign-in via Google succeeded uid=\(user.uid) email=\(user.email ?? "nil") providers=\(providers)"
+                "Firebase sign-in via Google succeeded uid=\(user.uid) email=\(user.email ?? "nil") " +
+                    "providers=\(providers)"
             )
         } catch {
+            let nsError = error as NSError
+            if nsError.domain == AuthErrorDomain,
+               AuthErrorCode.Code(rawValue: nsError.code) == .keychainError {
+                logAuthEvent(level: "WARN", "Retrying Firebase exchange with default keychain scope")
+                do {
+                    try Auth.auth().useUserAccessGroup(nil)
+                    let retryData = try await Auth.auth().signIn(with: credential)
+                    let retryUser = retryData.user
+                    let retryProviders = retryUser.providerData.map(\.providerID).joined(separator: ",")
+                    logAuthEvent(
+                        level: "INFO",
+                        "Firebase sign-in retry succeeded uid=\(retryUser.uid) email=\(retryUser.email ?? "nil") " +
+                            "providers=\(retryProviders)"
+                    )
+                    return
+                } catch {
+                    logAuthFailure(error, context: "Firebase sign-in exchange retry")
+                    throw error
+                }
+            }
             logAuthFailure(error, context: "Firebase sign-in exchange")
             throw error
         }
@@ -259,7 +295,7 @@ class FirebaseManager: ObservableObject {
         GIDSignIn.sharedInstance.signOut()
     }
     #else
-    func signInWithGoogle(presenting window: NSWindow) async throws {
+    func signInWithGoogle(presenting _: NSWindow) async throws {
         // Satisfy SwiftLint async-without-await while keeping the async signature used by callers
         await Task.yield()
         let err = NSError(
@@ -269,7 +305,8 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
-    func googleSignOut() { }
+
+    func googleSignOut() {}
     #endif
 }
 
@@ -285,8 +322,8 @@ class FirebaseManager: ObservableObject {
 
     @Published var currentUser: Any?
 
-    func configureIfNeeded() { }
-    func signIn(withCustomToken token: String) async throws {
+    func configureIfNeeded() {}
+    func signIn(withCustomToken _: String) async throws {
         await Task.yield()
         let err = NSError(
             domain: "FirebaseMissing",
@@ -295,6 +332,7 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
+
     func signInAnonymously() async throws {
         await Task.yield()
         let err = NSError(
@@ -304,11 +342,12 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
-    func signOut() throws { }
+
+    func signOut() throws {}
 
     // Provide stubs so UI compiles even without GoogleSignIn/Firebase
     @MainActor
-    func signInWithGoogle(presenting presenter: NSViewController) async throws {
+    func signInWithGoogle(presenting _: NSViewController) async throws {
         await Task.yield()
         let err = NSError(
             domain: "FirebaseMissing",
@@ -319,7 +358,7 @@ class FirebaseManager: ObservableObject {
     }
 
     @MainActor
-    func googleSignOut() { }
+    func googleSignOut() {}
 }
 
 #endif

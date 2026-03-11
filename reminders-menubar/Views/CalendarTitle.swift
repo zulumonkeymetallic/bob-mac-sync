@@ -1,22 +1,22 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct CalendarTitle: View {
     @EnvironmentObject var remindersData: RemindersData
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    
+
     var calendar: EKCalendar
     @State var calendarFolderIsHovered = false
-    
+
     var body: some View {
         HStack(alignment: .center) {
             Text(calendar.title)
                 .font(.headline)
                 .foregroundColor(Color(calendar.color))
                 .padding(.bottom, 5)
-            
+
             Spacer()
-            
+
             Button(action: {
                 remindersData.calendarForSaving = calendar
             }) {
@@ -44,10 +44,10 @@ struct CalendarTitleView_Previews: PreviewProvider {
         let calendar = EKCalendar(for: .reminder, eventStore: .init())
         calendar.title = "Reminders"
         calendar.color = .systemTeal
-        
+
         return calendar
     }
-    
+
     static var previews: some View {
         Group {
             ForEach(ColorScheme.allCases, id: \.self) { color in

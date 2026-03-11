@@ -1611,12 +1611,6 @@
         }
       }
     },
-    "Background Sync Interval" : {
-
-    },
-    "Bob" : {
-
-    },
     "Bob Authentication" : {
 
     },
@@ -1627,6 +1621,9 @@
 
     },
     "bob: %lld" : {
+
+    },
+    "Built: %@" : {
 
     },
     "changeReminderDueDateMenuOption" : {
@@ -1986,10 +1983,7 @@
     "Delete Duplicates Now (Hard Delete)" : {
 
     },
-    "Diagnose Duplicates (Debug)" : {
-
-    },
-    "Duplicates" : {
+    "Delta Sync with Bob" : {
 
     },
     "editReminderDueDateNextWeekOption" : {
@@ -4755,6 +4749,9 @@
         }
       }
     },
+    "Full Sync with Bob" : {
+
+    },
     "Google Sign-In" : {
 
     },
@@ -5649,6 +5646,9 @@
           }
         }
       }
+    },
+    "Metadata Detail" : {
+
     },
     "newReminderAddDateButton" : {
       "extractionState" : "manual",
@@ -7052,13 +7052,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i dny"
+                  "value" : "Každé %d dny"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i dní"
+                  "value" : "Každých %d dní"
                 }
               },
               "one" : {
@@ -7070,7 +7070,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i dní"
+                  "value" : "Každých %d dní"
                 }
               }
             }
@@ -7088,7 +7088,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Alle %i Tage"
+                  "value" : "Alle %d Tage"
                 }
               }
             }
@@ -7106,7 +7106,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Every %i days"
+                  "value" : "Every %d days"
                 }
               }
             }
@@ -7124,7 +7124,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Cada %i días"
+                  "value" : "Cada %d días"
                 }
               }
             }
@@ -7142,7 +7142,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Bawat %i draw"
+                  "value" : "Bawat %d draw"
                 }
               }
             }
@@ -7160,7 +7160,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Tous les %i jours"
+                  "value" : "Tous les %d jours"
                 }
               }
             }
@@ -7172,7 +7172,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Setiap %i hari"
+                  "value" : "Setiap %d hari"
                 }
               }
             }
@@ -7190,7 +7190,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ogni %i giorni"
+                  "value" : "Ogni %d giorni"
                 }
               }
             }
@@ -7202,7 +7202,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%i일마다"
+                  "value" : "%d일마다"
                 }
               }
             }
@@ -7220,7 +7220,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Elke %i dagen"
+                  "value" : "Elke %d dagen"
                 }
               }
             }
@@ -7232,13 +7232,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i dni"
+                  "value" : "Co %d dni"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i dni"
+                  "value" : "Co %d dni"
                 }
               },
               "one" : {
@@ -7250,7 +7250,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i dni"
+                  "value" : "Co %d dni"
                 }
               }
             }
@@ -7268,7 +7268,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A cada %i dias"
+                  "value" : "A cada %d dias"
                 }
               }
             }
@@ -7280,13 +7280,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i dni"
+                  "value" : "Každé %d dni"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i dní"
+                  "value" : "Každých %d dní"
                 }
               },
               "one" : {
@@ -7298,7 +7298,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i dní"
+                  "value" : "Každých %d dní"
                 }
               }
             }
@@ -7310,7 +7310,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 天"
+                  "value" : "每 %d 天"
                 }
               }
             }
@@ -7322,7 +7322,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 天"
+                  "value" : "每 %d 天"
                 }
               }
             }
@@ -7339,13 +7339,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i měsíce"
+                  "value" : "Každé %d měsíce"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i měsíců"
+                  "value" : "Každých %d měsíců"
                 }
               },
               "one" : {
@@ -7357,7 +7357,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i měsíců"
+                  "value" : "Každých %d měsíců"
                 }
               }
             }
@@ -7375,7 +7375,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Alle %i Monate"
+                  "value" : "Alle %d Monate"
                 }
               }
             }
@@ -7393,7 +7393,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Every %i months"
+                  "value" : "Every %d months"
                 }
               }
             }
@@ -7411,7 +7411,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Cada %i meses"
+                  "value" : "Cada %d meses"
                 }
               }
             }
@@ -7429,7 +7429,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Bawat %i buwan"
+                  "value" : "Bawat %d buwan"
                 }
               }
             }
@@ -7447,7 +7447,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Tous les %i mois"
+                  "value" : "Tous les %d mois"
                 }
               }
             }
@@ -7459,7 +7459,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Setiap %i bulan"
+                  "value" : "Setiap %d bulan"
                 }
               }
             }
@@ -7477,7 +7477,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ogni %i mesi"
+                  "value" : "Ogni %d mesi"
                 }
               }
             }
@@ -7489,7 +7489,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%i달마다"
+                  "value" : "%d달마다"
                 }
               }
             }
@@ -7507,7 +7507,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Elke %i maanden"
+                  "value" : "Elke %d maanden"
                 }
               }
             }
@@ -7519,13 +7519,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i miesiące"
+                  "value" : "Co %d miesiące"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i miesięcy"
+                  "value" : "Co %d miesięcy"
                 }
               },
               "one" : {
@@ -7537,7 +7537,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i miesięcy"
+                  "value" : "Co %d miesięcy"
                 }
               }
             }
@@ -7555,7 +7555,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A cada %i meses"
+                  "value" : "A cada %d meses"
                 }
               }
             }
@@ -7567,13 +7567,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i mesiace"
+                  "value" : "Každé %d mesiace"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i mesiacov"
+                  "value" : "Každých %d mesiacov"
                 }
               },
               "one" : {
@@ -7585,7 +7585,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i mesiacov"
+                  "value" : "Každých %d mesiacov"
                 }
               }
             }
@@ -7597,7 +7597,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 月"
+                  "value" : "每 %d 月"
                 }
               }
             }
@@ -7609,7 +7609,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 個月"
+                  "value" : "每 %d 個月"
                 }
               }
             }
@@ -7626,13 +7626,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i týdny"
+                  "value" : "Každé %d týdny"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i týdnů"
+                  "value" : "Každých %d týdnů"
                 }
               },
               "one" : {
@@ -7644,7 +7644,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i týdnů"
+                  "value" : "Každých %d týdnů"
                 }
               }
             }
@@ -7662,7 +7662,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Alle %i Wochen"
+                  "value" : "Alle %d Wochen"
                 }
               }
             }
@@ -7680,7 +7680,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Every %i weeks"
+                  "value" : "Every %d weeks"
                 }
               }
             }
@@ -7698,7 +7698,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Cada %i semanas"
+                  "value" : "Cada %d semanas"
                 }
               }
             }
@@ -7716,7 +7716,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Bawat %i linggo"
+                  "value" : "Bawat %d linggo"
                 }
               }
             }
@@ -7734,7 +7734,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Toutes les %i semaines"
+                  "value" : "Toutes les %d semaines"
                 }
               }
             }
@@ -7746,7 +7746,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Setiap %i minggu"
+                  "value" : "Setiap %d minggu"
                 }
               }
             }
@@ -7764,7 +7764,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ogni %i settimane"
+                  "value" : "Ogni %d settimane"
                 }
               }
             }
@@ -7776,7 +7776,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%i주마다"
+                  "value" : "%d주마다"
                 }
               }
             }
@@ -7794,7 +7794,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Elke %i weken"
+                  "value" : "Elke %d weken"
                 }
               }
             }
@@ -7806,13 +7806,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i tygodnie"
+                  "value" : "Co %d tygodnie"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i tygodni"
+                  "value" : "Co %d tygodni"
                 }
               },
               "one" : {
@@ -7824,7 +7824,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i tygodni"
+                  "value" : "Co %d tygodni"
                 }
               }
             }
@@ -7842,7 +7842,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A cada %i semanas"
+                  "value" : "A cada %d semanas"
                 }
               }
             }
@@ -7854,13 +7854,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i týždne"
+                  "value" : "Každé %d týždne"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i týždňov"
+                  "value" : "Každých %d týždňov"
                 }
               },
               "one" : {
@@ -7872,7 +7872,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i týždňov"
+                  "value" : "Každých %d týždňov"
                 }
               }
             }
@@ -7884,7 +7884,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 周"
+                  "value" : "每 %d 周"
                 }
               }
             }
@@ -7896,7 +7896,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 週"
+                  "value" : "每 %d 週"
                 }
               }
             }
@@ -7913,13 +7913,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i roky"
+                  "value" : "Každé %d roky"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i let"
+                  "value" : "Každých %d let"
                 }
               },
               "one" : {
@@ -7931,7 +7931,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i let"
+                  "value" : "Každých %d let"
                 }
               }
             }
@@ -7949,7 +7949,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Alle %i Jahre"
+                  "value" : "Alle %d Jahre"
                 }
               }
             }
@@ -7967,7 +7967,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Every %i years"
+                  "value" : "Every %d years"
                 }
               }
             }
@@ -7985,7 +7985,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Cada %i años"
+                  "value" : "Cada %d años"
                 }
               }
             }
@@ -8003,7 +8003,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Bawat %i taon"
+                  "value" : "Bawat %d taon"
                 }
               }
             }
@@ -8021,7 +8021,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Tous les %i ans"
+                  "value" : "Tous les %d ans"
                 }
               }
             }
@@ -8033,7 +8033,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Setiap %i tahun"
+                  "value" : "Setiap %d tahun"
                 }
               }
             }
@@ -8051,7 +8051,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Ogni %i anni"
+                  "value" : "Ogni %d anni"
                 }
               }
             }
@@ -8063,7 +8063,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "%i년마다"
+                  "value" : "%d년마다"
                 }
               }
             }
@@ -8081,7 +8081,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Elke %i jaar"
+                  "value" : "Elke %d jaar"
                 }
               }
             }
@@ -8093,13 +8093,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i lata"
+                  "value" : "Co %d lata"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i lat"
+                  "value" : "Co %d lat"
                 }
               },
               "one" : {
@@ -8111,7 +8111,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Co %i lat"
+                  "value" : "Co %d lat"
                 }
               }
             }
@@ -8129,7 +8129,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "A cada %i anos"
+                  "value" : "A cada %d anos"
                 }
               }
             }
@@ -8141,13 +8141,13 @@
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každé %i roky"
+                  "value" : "Každé %d roky"
                 }
               },
               "many" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i rokov"
+                  "value" : "Každých %d rokov"
                 }
               },
               "one" : {
@@ -8159,7 +8159,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "Každých %i rokov"
+                  "value" : "Každých %d rokov"
                 }
               }
             }
@@ -8171,7 +8171,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 年"
+                  "value" : "每 %d 年"
                 }
               }
             }
@@ -8183,7 +8183,7 @@
               "other" : {
                 "stringUnit" : {
                   "state" : "translated",
-                  "value" : "每 %i 年"
+                  "value" : "每 %d 年"
                 }
               }
             }
@@ -10307,7 +10307,7 @@
     "Stay Signed In" : {
 
     },
-    "Sync with Bob" : {
+    "Sync Stories" : {
 
     },
     "Sync with Bob now" : {

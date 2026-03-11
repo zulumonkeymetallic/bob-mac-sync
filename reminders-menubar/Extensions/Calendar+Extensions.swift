@@ -5,7 +5,7 @@ extension Calendar {
         var dateComponents = DateComponents()
         dateComponents.day = 1
         dateComponents.second = -1
-        return self.date(byAdding: dateComponents, to: self.startOfDay(for: date))
+        return self.date(byAdding: dateComponents, to: startOfDay(for: date))
     }
 
     func daysBetween(_ startDate: Date, and endDate: Date) -> Int {

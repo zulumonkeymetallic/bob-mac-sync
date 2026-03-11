@@ -3,7 +3,7 @@ import SwiftUI
 struct OnKeyboardShortcut: ViewModifier {
     let shortcut: KeyboardShortcut
     let action: () -> Void
-    
+
     func body(content: Content) -> some View {
         content
             .overlay(

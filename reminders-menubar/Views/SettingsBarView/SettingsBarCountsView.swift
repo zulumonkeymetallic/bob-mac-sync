@@ -16,4 +16,3 @@ struct SettingsBarCountsView: View {
         .help("Open tasks – Bob and Mac Reminders")
     }
 }
-

@@ -3,11 +3,11 @@ import EventKit
 @MainActor
 class RemindersService {
     static let shared = RemindersService()
-    
+
     private init() {
         // This prevents others from using the default '()' initializer for this class.
     }
-    
+
     private lazy var eventStore: EKEventStore? = {
         guard AppConstants.useNativeReminders else { return nil }
         return EKEventStore()
@@ -45,7 +45,7 @@ class RemindersService {
             return status == .authorized
         }
     }
-    
+
     func requestAccess(completion: @escaping (Bool, String?) -> Void) {
         guard AppConstants.useNativeReminders else {
             completion(true, nil)
@@ -61,21 +61,21 @@ class RemindersService {
             }
         }
     }
-    
+
     func getCalendar(withIdentifier calendarIdentifier: String) -> EKCalendar? {
         guard let eventStore else {
             return nil
         }
         return eventStore.calendar(withIdentifier: calendarIdentifier)
     }
-    
+
     func getCalendars() -> [EKCalendar] {
         guard let eventStore else {
             return []
         }
         return eventStore.calendars(for: .reminder)
     }
-    
+
     func getDefaultCalendar() -> EKCalendar? {
         guard let eventStore else {
             return nil
@@ -136,14 +136,14 @@ class RemindersService {
 
     private func createReminderItems(for calendarReminders: [EKReminder]) -> [ReminderItem] {
         var reminderListItems: [ReminderItem] = []
-        
+
         let noParentKey = "noParentKey"
         let remindersByParentId = Dictionary(grouping: calendarReminders, by: { $0.parentId ?? noParentKey })
         let parentReminders = remindersByParentId[noParentKey, default: []]
-        
-        parentReminders.forEach { parentReminder in
+
+        for parentReminder in parentReminders {
             let parentId = parentReminder.calendarItemIdentifier
-            let children = remindersByParentId[parentId, default: []].map({ ReminderItem(for: $0, isChild: true) })
+            let children = remindersByParentId[parentId, default: []].map { ReminderItem(for: $0, isChild: true) }
             reminderListItems.append(ReminderItem(for: parentReminder, withChildren: children))
         }
         return reminderListItems
@@ -153,10 +153,10 @@ class RemindersService {
         guard let eventStore else {
             return []
         }
-        let calendars = getCalendars().filter({ calendarIdentifiers.contains($0.calendarIdentifier) })
+        let calendars = getCalendars().filter { calendarIdentifiers.contains($0.calendarIdentifier) }
         let predicate = eventStore.predicateForReminders(in: calendars)
-        let remindersByCalendar = Dictionary(
-            grouping: await fetchReminders(matching: predicate),
+        let remindersByCalendar = await Dictionary(
+            grouping: fetchReminders(matching: predicate),
             by: { $0.calendar.calendarIdentifier }
         )
 
@@ -166,10 +166,10 @@ class RemindersService {
             let reminderListItems = createReminderItems(for: calendarReminders)
             reminderLists.append(ReminderList(for: calendar, with: reminderListItems))
         }
-        
+
         return reminderLists
     }
-    
+
     func getUpcomingReminders(
         _ interval: ReminderInterval,
         for calendarIdentifiers: [String]? = nil
@@ -183,22 +183,22 @@ class RemindersService {
                 // If the filter does not have any calendar selected, return empty
                 return []
             }
-            calendars = getCalendars().filter({ calendarIdentifiers.contains($0.calendarIdentifier) })
+            calendars = getCalendars().filter { calendarIdentifiers.contains($0.calendarIdentifier) }
         }
         let predicate = eventStore.predicateForIncompleteReminders(
             withDueDateStarting: nil,
             ending: interval.endingDate,
             calendars: calendars
         )
-        var reminders = await fetchReminders(matching: predicate).map({ ReminderItem(for: $0) })
+        var reminders = await fetchReminders(matching: predicate).map { ReminderItem(for: $0) }
         if interval == .due {
             // For the 'due' interval, we should filter reminders for today with no time.
             // These will only be considered due/expired on the following day.
-            reminders = reminders.filter { $0.reminder.isExpired }
+            reminders = reminders.filter(\.reminder.isExpired)
         }
         return reminders.sortedReminders
     }
-    
+
     func save(reminder: EKReminder) {
         guard let eventStore else {
             return
@@ -209,7 +209,7 @@ class RemindersService {
             print("Error saving reminder:", error.localizedDescription)
         }
     }
-    
+
     @discardableResult
     func createNew(with rmbReminder: RmbReminder, in calendar: EKCalendar) -> EKReminder? {
         guard let eventStore else {
@@ -226,7 +226,7 @@ class RemindersService {
             return nil
         }
     }
-    
+
     func remove(reminder: EKReminder) {
         guard let eventStore else {
             return

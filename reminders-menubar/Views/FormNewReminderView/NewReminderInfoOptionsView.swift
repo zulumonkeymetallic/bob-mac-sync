@@ -1,30 +1,30 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct NewReminderInfoOptionsView: View {
     @Binding var date: Date
     @Binding var hasDueDate: Bool
     @Binding var hasTime: Bool
     @Binding var priority: EKReminderPriority
-    
+
     enum InfoOptionType {
         case date
         case time
         case priority
     }
-    
+
     var body: some View {
         let infoOptions: [InfoOptionType] = [
             .date,
             hasDueDate ? .time : nil,
             .priority
         ].compactMap { $0 }
-        
+
         let columns = 2
         let infoOptionsHStacked: [[InfoOptionType]] = stride(from: 0, to: infoOptions.count, by: columns).map {
-            Array(infoOptions[$0..<min($0 + columns, infoOptions.count)])
+            Array(infoOptions[$0 ..< min($0 + columns, infoOptions.count)])
         }
-        
+
         VStack(alignment: .leading) {
             ForEach(infoOptionsHStacked, id: \.self) { optionsRow in
                 HStack {
@@ -36,7 +36,7 @@ struct NewReminderInfoOptionsView: View {
             }
         }
     }
-    
+
     @ViewBuilder
     func singleInfoOptionView(for option: InfoOptionType) -> some View {
         switch option {
@@ -57,11 +57,11 @@ func reminderRemindDateTimeOptionView(
     hasComponent: Binding<Bool>
 ) -> some View {
     let pickerIcon = components == .time ? "clock" : "calendar"
-    
+
     let addTimeButtonText = rmbLocalized(.newReminderAddTimeButton)
     let addDateButtonText = rmbLocalized(.newReminderAddDateButton)
     let pickerAddComponentText = components == .time ? addTimeButtonText : addDateButtonText
-    
+
     if hasComponent.wrappedValue {
         HStack {
             Image(systemName: pickerIcon)
@@ -93,20 +93,20 @@ func reminderRemindDateTimeOptionView(
 private func priorityLabel(_ priority: EKReminderPriority) -> RemindersMenuBarLocalizedKeys {
     switch priority {
     case .low:
-        return .editReminderPriorityLowOption
+        .editReminderPriorityLowOption
     case .medium:
-        return .editReminderPriorityMediumOption
+        .editReminderPriorityMediumOption
     case .high:
-        return .editReminderPriorityHighOption
+        .editReminderPriorityHighOption
     default:
-        return .changeReminderPriorityMenuOption
+        .changeReminderPriorityMenuOption
     }
 }
 
 @ViewBuilder
 func reminderPriorityOptionView(priority: Binding<EKReminderPriority>) -> some View {
     let pickerIcon = priority.wrappedValue.systemImage ?? "exclamationmark.circle"
-    
+
     Button {
         priority.wrappedValue = priority.wrappedValue.nextPriority
     } label: {
@@ -118,7 +118,7 @@ func reminderPriorityOptionView(priority: Binding<EKReminderPriority>) -> some V
 
 struct ReminderInfoCapsule: ViewModifier {
     func body(content: Content) -> some View {
-        return content
+        content
             .frame(height: 20)
             .padding(.horizontal, 8)
             .background(Color.secondary.opacity(0.2))

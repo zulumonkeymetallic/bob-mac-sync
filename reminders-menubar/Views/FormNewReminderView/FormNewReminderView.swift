@@ -1,11 +1,11 @@
-import SwiftUI
 import EventKit
+import SwiftUI
 
 struct FormNewReminderView: View {
     @EnvironmentObject var remindersData: RemindersData
     @ObservedObject var userPreferences = UserPreferences.shared
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    
+
     @State var rmbReminder = RmbReminder()
     @State var isShowingInfoOptions = false
 
@@ -16,24 +16,24 @@ struct FormNewReminderView: View {
         let calendarForSaving = getCalendarForSaving()
         // swiftlint:disable:next redundant_discardable_let
         let _ = CalendarParser.updateShared(with: remindersData.calendars)
-        
+
         Form {
             HStack(alignment: .top) {
                 newReminderTextFieldView()
-                .padding(.vertical, 8)
-                .padding(.horizontal, 8)
-                .padding(.leading, 22)
-                .background(Color.rmbColor(for: .textFieldBackground, and: colorSchemeContrast))
-                .cornerRadius(8)
-                .textFieldStyle(PlainTextFieldStyle())
-                .modifier(ContrastBorderOverlay())
-                .overlay(
-                    Image(systemName: "plus.circle.fill")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .foregroundColor(.gray)
-                        .padding([.top, .leading], 8)
-                )
-                
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 8)
+                    .padding(.leading, 22)
+                    .background(Color.rmbColor(for: .textFieldBackground, and: colorSchemeContrast))
+                    .cornerRadius(8)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .modifier(ContrastBorderOverlay())
+                    .overlay(
+                        Image(systemName: "plus.circle.fill")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .foregroundColor(.gray)
+                            .padding([.top, .leading], 8)
+                    )
+
                 Menu {
                     ForEach(remindersData.calendars, id: \.calendarIdentifier) { calendar in
                         Button(action: {
@@ -48,9 +48,9 @@ struct FormNewReminderView: View {
                             SelectableView(title: calendar.title, isSelected: isSelected, color: Color(calendar.color))
                         }
                     }
-                    
+
                     Divider()
-                    
+
                     Button(action: {
                         userPreferences.autoSuggestToday.toggle()
                         if rmbReminder.title.isEmpty {
@@ -63,7 +63,7 @@ struct FormNewReminderView: View {
                             isSelected: isSelected
                         )
                     }
-                    
+
                     Button(action: { userPreferences.removeParsedDateFromTitle.toggle() }) {
                         let isSelected = userPreferences.removeParsedDateFromTitle
                         SelectableView(
@@ -71,8 +71,7 @@ struct FormNewReminderView: View {
                             isSelected: isSelected
                         )
                     }
-                } label: {
-                }
+                } label: {}
                 .menuStyle(BorderlessButtonMenuStyle())
                 .frame(width: 14, height: 16)
                 .modifier(CenteredMenuPadding())
@@ -106,7 +105,7 @@ struct FormNewReminderView: View {
                 text: $rmbReminder.title,
                 highlightedTexts: rmbReminder.highlightedTexts,
                 textContainerDynamicHeight: $textFieldDynamicHeight,
-                focusTrigger: $textFieldFocusTrigger,
+                focusTrigger: $textFieldFocusTrigger
             )
             .onSubmit {
                 createNewReminder()
@@ -130,7 +129,7 @@ struct FormNewReminderView: View {
             }
         }
     }
-    
+
     private func newRmbReminder() -> RmbReminder {
         var rmbReminder = RmbReminder()
         if userPreferences.autoSuggestToday {
@@ -138,25 +137,26 @@ struct FormNewReminderView: View {
         }
         return rmbReminder
     }
-    
+
     private func getCalendarForSaving() -> EKCalendar? {
-        return rmbReminder.textCalendarResult.calendar ?? remindersData.calendarForSaving
+        rmbReminder.textCalendarResult.calendar ?? remindersData.calendarForSaving
     }
-    
+
     private func createNewReminder() {
         let newReminderTitle = finalNewReminderTitle()
         guard !newReminderTitle.isEmpty,
-              let calendarForSaving = getCalendarForSaving() else {
+              let calendarForSaving = getCalendarForSaving()
+        else {
             return
         }
-        
+
         rmbReminder.prepareToSave()
         rmbReminder.title = newReminderTitle
-        
+
         RemindersService.shared.createNew(with: rmbReminder, in: calendarForSaving)
         rmbReminder = newRmbReminder()
     }
-    
+
     private func finalNewReminderTitle() -> String {
         var title = rmbReminder.title
         if let parsedPriorityRange = Range(rmbReminder.textPriorityResult.highlightedText.range, in: title) {
@@ -168,7 +168,7 @@ struct FormNewReminderView: View {
             title = title.replacingOccurrences(of: rmbReminder.textDateResult.string, with: "")
         }
         title = title.replacingOccurrences(of: rmbReminder.textCalendarResult.string, with: "")
-        
+
         return title.trimmingCharacters(in: .whitespaces)
     }
 }
@@ -191,15 +191,15 @@ struct CenteredMenuPadding: ViewModifier {
 struct ContrastBorderOverlay: ViewModifier {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     private var isEnabled: Bool { colorSchemeContrast == .increased }
-    
+
     func body(content: Content) -> some View {
-        return content
+        content
             .overlay(
                 isEnabled
-                ? RoundedRectangle(cornerRadius: 8)
+                    ? RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(style: StrokeStyle(lineWidth: 1))
                     .foregroundColor(Color.rmbColor(for: .borderContrast, and: colorSchemeContrast))
-                : nil
+                    : nil
             )
     }
 }

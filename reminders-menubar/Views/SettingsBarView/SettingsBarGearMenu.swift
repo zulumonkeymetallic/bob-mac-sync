@@ -1,16 +1,17 @@
+import AppKit
 import SwiftUI
 
+// swiftlint:disable:next type_body_length
 struct SettingsBarGearMenu: View {
     @EnvironmentObject var remindersData: RemindersData
     @ObservedObject var userPreferences = UserPreferences.shared
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    
+
     @State var gearIsHovered = false
-    
     @ObservedObject var appUpdateCheckHelper = AppUpdateCheckHelper.shared
     @ObservedObject var keyboardShortcutService = KeyboardShortcutService.shared
     @ObservedObject var manualSyncService = ManualSyncService.shared
-    
+
     var body: some View {
         Menu {
             VStack {
@@ -27,12 +28,49 @@ struct SettingsBarGearMenu: View {
                     Divider()
                 }
 
+                // === SYNC CONTROLS ===
+                Button("Full Sync with Bob") {
+                    ManualSyncService.shared.triggerWithMode(reason: "Settings Menu - Full Sync", mode: .full)
+                }
+                .disabled(manualSyncService.isSyncing)
+                
+                Button("Delta Sync with Bob") {
+                    ManualSyncService.shared.triggerWithMode(reason: "Settings Menu - Delta Sync", mode: .delta)
+                }
+                .disabled(manualSyncService.isSyncing)
+
+                Button(action: {
+                    userPreferences.enableBackgroundSync.toggle()
+                    BackgroundSyncService.shared.applyPreference()
+                }) {
+                    SelectableView(
+                        title: "Enable Background Sync",
+                        isSelected: userPreferences.enableBackgroundSync
+                    )
+                }
+
+                Button(action: {
+                    if userPreferences.syncStories {
+                        promptDisableStorySync()
+                    } else {
+                        userPreferences.syncStories = true
+                    }
+                }) {
+                    SelectableView(
+                        title: "Sync Standalone Stories",
+                        isSelected: userPreferences.syncStories
+                    )
+                }
+
+                Divider()
+
+                // === AUTHENTICATION ===
                 Button(action: {
                     FirebaseAuthView.showWindow()
                 }) {
                     Label("Sign In to Bob…", systemImage: "person.crop.circle.badge.checkmark")
                 }
-
+                
                 Button(action: {
                     userPreferences.launchAtLoginIsEnabled.toggle()
                 }) {
@@ -44,102 +82,107 @@ struct SettingsBarGearMenu: View {
                     )
                 }
 
+                Divider()
+
+                // === METADATA DISPLAY OPTIONS (inline) ===
                 Button(action: {
-                    userPreferences.showBobMetadataInNotes.toggle()
+                    userPreferences.showBobMetadataInNotes = false
                 }) {
                     SelectableView(
-                        title: "Show Bob Metadata in Notes",
-                        isSelected: userPreferences.showBobMetadataInNotes,
+                        title: "No Metadata in Notes",
+                        isSelected: !userPreferences.showBobMetadataInNotes,
                         withPadding: false
                     )
                 }
 
-                visualCustomizationOptions()
-
-                // Bob Auth & Sync
-                Menu {
-                    Button("Sync with Bob") { ManualSyncService.shared.trigger(reason: "Settings Menu") }
-                    .disabled(manualSyncService.isSyncing)
-                    Button("Open Sync Log") {
-                        SyncLogService.shared.revealLogInFinder()
-                    }
-                    Button("Open Log Folder") {
-                        SyncLogService.shared.openLogsFolder()
-                    }
-                    Divider()
-                    // Background sync controls
-                    Button(action: {
-                        userPreferences.enableBackgroundSync.toggle()
-                        BackgroundSyncService.shared.applyPreference()
-                    }) {
-                        SelectableView(title: "Enable Background Sync", isSelected: userPreferences.enableBackgroundSync)
-                    }
-                    Menu("Background Sync Interval") {
-                        ForEach([15, 30, 60, 120, 240], id: \.self) { minutes in
-                            Button(action: {
-                                userPreferences.backgroundSyncIntervalMinutes = minutes
-                                if userPreferences.enableBackgroundSync { BackgroundSyncService.shared.applyPreference() }
-                            }) {
-                                SelectableView(title: "Every \(minutes) min", isSelected: userPreferences.backgroundSyncIntervalMinutes == minutes)
-                            }
-                        }
-                    }
-                    Divider()
-                    // Duplicate maintenance
-                    Menu("Duplicates") {
-                        Button("Mark Duplicates Complete (TTL)") {
-                            Task {
-                                let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: false)
-                                if let err = res.error {
-                                    SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                    await SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
-                                } else {
-                                    let msg = "Completed \(res.deleted) duplicates across \(res.groups) groups"
-                                    SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                    await SyncFeedbackService.shared.show(message: msg)
-                                }
-                            }
-                        }
-                        Button("Diagnose Duplicates (Debug)") {
-                            Task {
-                                let diag = await FirebaseSyncService.shared.diagnoseDuplicates()
-                                if let err = diag.error {
-                                    SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                    await SyncFeedbackService.shared.show(message: "Diagnose error: \(err)")
-                                } else {
-                                    let msg = "Diagnosed \(diag.processed) tasks, groups: key=\(diag.keyGroups) rid=\(diag.ridGroups)"
-                                    SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                    await SyncFeedbackService.shared.show(message: msg)
-                                }
-                            }
-                        }
-                        Button("Delete Duplicates Now (Hard Delete)") {
-                            Task {
-                                let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: true)
-                                if let err = res.error {
-                                    SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
-                                    await SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
-                                } else {
-                                    let msg = "Deleted \(res.deleted) duplicates across \(res.groups) groups"
-                                    SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
-                                    await SyncFeedbackService.shared.show(message: msg)
-                                }
-                            }
-                        }
-                    }
-                    Button(action: { userPreferences.syncDryRun.toggle() }) {
-                        SelectableView(title: "Dry-Run Mode (no writes)", isSelected: userPreferences.syncDryRun)
-                    }
-                    // Theme → List Mapping removed; handled via tags
-                    if let summary = UserPreferences.shared.lastSyncSummary, !summary.isEmpty {
-                        Divider()
-                        Text("Last Sync: \(summary)")
-                            .font(.footnote)
-                    }
-                } label: {
-                    Text("Bob")
+                Button(action: {
+                    userPreferences.showBobMetadataInNotes = true
+                    userPreferences.metadataDetailLevel = .full
+                }) {
+                    SelectableView(
+                        title: "Full Metadata Detail",
+                        isSelected: userPreferences.showBobMetadataInNotes &&
+                            userPreferences.metadataDetailLevel == .full,
+                        withPadding: false
+                    )
+                }
+                
+                Button(action: {
+                    userPreferences.showBobMetadataInNotes = true
+                    userPreferences.metadataDetailLevel = .minimal
+                }) {
+                    SelectableView(
+                        title: "Minimal Metadata Detail",
+                        isSelected: userPreferences.showBobMetadataInNotes &&
+                            userPreferences.metadataDetailLevel == .minimal,
+                        withPadding: false
+                    )
                 }
 
+                Divider()
+
+                visualCustomizationOptions()
+
+                Divider()
+
+                // === LOGS & MAINTENANCE ===
+                Button("Open Sync Log") {
+                    SyncLogService.shared.revealLogInFinder()
+                }
+
+                Button("Open Log Folder") {
+                    SyncLogService.shared.openLogsFolder()
+                }
+
+                Button("Mark Duplicates Complete (TTL)") {
+                    Task {
+                        let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: false)
+                        if let err = res.error {
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                            }
+                        } else {
+                            let msg = "Completed \(res.deleted) duplicates across \(res.groups) groups"
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: msg)
+                            }
+                        }
+                    }
+                }
+                
+                Button("Delete Duplicates Now (Hard Delete)") {
+                    Task {
+                        let res = await FirebaseSyncService.shared.deleteAllDuplicates(hardDelete: true)
+                        if let err = res.error {
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "ERROR", message: err)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: "Dedupe failed: \(err)")
+                            }
+                        } else {
+                            let msg = "Deleted \(res.deleted) duplicates across \(res.groups) groups"
+                            SyncLogService.shared.logEvent(tag: "dedupe", level: "INFO", message: msg)
+                            await MainActor.run {
+                                SyncFeedbackService.shared.show(message: msg)
+                            }
+                        }
+                    }
+                }
+
+                Button(action: { userPreferences.syncDryRun.toggle() }) {
+                    SelectableView(title: "Dry-Run Mode (no writes)", isSelected: userPreferences.syncDryRun)
+                }
+                
+                if let summary = UserPreferences.shared.lastSyncSummary, !summary.isEmpty {
+                    Divider()
+                    Text("Last Sync: \(summary)")
+                        .font(.footnote)
+                }
+
+                Divider()
+                
+                // === SHORTCUTS & TOOLS ===
                 Button {
                     KeyboardShortcutView.showWindow()
                 } label: {
@@ -147,9 +190,8 @@ struct SettingsBarGearMenu: View {
                     let activeShortcutText = Text(verbatim: "     \(activeShortcut)").foregroundColor(.gray)
                     Text(rmbLocalized(.keyboardShortcutOptionButton)) + activeShortcutText
                 }
-                
-                Divider()
 
+                Divider()
 
                 Button(action: {
                     Task {
@@ -158,15 +200,15 @@ struct SettingsBarGearMenu: View {
                 }) {
                     Text(rmbLocalized(.reloadRemindersDataButton))
                 }
-                
+
                 Divider()
-                
+
                 Button(action: {
                     AboutView.showWindow()
                 }) {
                     Text(rmbLocalized(.appAboutButton))
                 }
-                
+
                 Button(action: {
                     NSApplication.shared.terminate(self)
                 }) {
@@ -186,22 +228,22 @@ struct SettingsBarGearMenu: View {
         }
         .help(rmbLocalized(.settingsButtonHelp))
     }
-    
+
     @ViewBuilder
     func visualCustomizationOptions() -> some View {
         Divider()
-        
+
         appAppearanceMenu()
-        
+
         menuBarIconMenu()
-        
+
         menuBarCounterMenu()
-        
+
         preferredLanguageMenu()
-        
+
         Divider()
     }
-    
+
     func appAppearanceMenu() -> some View {
         Menu {
             ForEach(RmbColorScheme.allCases, id: \.rawValue) { colorScheme in
@@ -210,12 +252,12 @@ struct SettingsBarGearMenu: View {
                     SelectableView(title: colorScheme.title, isSelected: isSelected)
                 }
             }
-            
+
             Divider()
-            
+
             let isIncreasedContrastEnabled = colorSchemeContrast == .increased
             let isTransparencyEnabled = userPreferences.backgroundIsTransparent && !isIncreasedContrastEnabled
-            
+
             Button(action: {
                 userPreferences.backgroundIsTransparent = false
             }) {
@@ -226,7 +268,7 @@ struct SettingsBarGearMenu: View {
                 )
             }
             .disabled(isIncreasedContrastEnabled)
-            
+
             Button(action: {
                 userPreferences.backgroundIsTransparent = true
             }) {
@@ -241,13 +283,13 @@ struct SettingsBarGearMenu: View {
             Text(rmbLocalized(.appAppearanceMenu))
         }
     }
-    
+
     func menuBarIconMenu() -> some View {
         Menu {
             ForEach(RmbIcon.allCases, id: \.self) { icon in
                 Button(action: {
                     userPreferences.reminderMenuBarIcon = icon
-                    AppDelegate.shared.loadMenuBarIcon()
+                    AppDelegate.shared?.loadMenuBarIcon()
                 }) {
                     Image(nsImage: icon.image)
                     Text(icon.name)
@@ -257,7 +299,7 @@ struct SettingsBarGearMenu: View {
             Text(rmbLocalized(.menuBarIconSettingsMenu))
         }
     }
-    
+
     func menuBarCounterMenu() -> some View {
         Menu {
             ForEach(RmbMenuBarCounterType.allCases, id: \.rawValue) { counterType in
@@ -266,9 +308,9 @@ struct SettingsBarGearMenu: View {
                     SelectableView(title: counterType.title, isSelected: isSelected)
                 }
             }
-            
+
             Divider()
-            
+
             Button(action: {
                 userPreferences.filterMenuBarCountByCalendar.toggle()
             }) {
@@ -281,7 +323,7 @@ struct SettingsBarGearMenu: View {
             Text(rmbLocalized(.menuBarCounterSettingsMenu))
         }
     }
-    
+
     func preferredLanguageMenu() -> some View {
         Menu {
             Button(action: {
@@ -293,9 +335,9 @@ struct SettingsBarGearMenu: View {
                     isSelected: isSelected
                 )
             }
-            
+
             Divider()
-                            
+
             ForEach(rmbAvailableLocales(), id: \.identifier) { locale in
                 let localeIdentifier = locale.identifier
                 Button(action: {
@@ -307,6 +349,33 @@ struct SettingsBarGearMenu: View {
             }
         } label: {
             Text(rmbLocalized(.preferredLanguageMenu))
+        }
+    }
+
+    private func promptDisableStorySync() {
+        let alert = NSAlert()
+        alert.messageText = "Turn off Story Sync?"
+        alert.informativeText = "Disabling story sync stops new story reminders. " +
+            "You can also remove existing story reminders from Reminders."
+        alert.addButton(withTitle: "Turn Off Only")
+        alert.addButton(withTitle: "Turn Off & Remove Story Reminders")
+        alert.addButton(withTitle: "Cancel")
+        let response = alert.runModal()
+        switch response {
+        case .alertFirstButtonReturn:
+            userPreferences.syncStories = false
+        case .alertSecondButtonReturn:
+            userPreferences.syncStories = false
+            Task {
+                let result = await FirebaseSyncService.shared.removeStoryRemindersFromReminders()
+                await MainActor.run {
+                    SyncFeedbackService.shared.show(
+                        message: "Removed \(result.removed) story reminders (skipped \(result.skipped))"
+                    )
+                }
+            }
+        default:
+            break
         }
     }
 }
