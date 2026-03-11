@@ -4750,6 +4750,8 @@ actor FirebaseSyncService {
 
                 var data: [String: Any] = [
                     "updatedAt": FieldValue.serverTimestamp(),
+                    "serverUpdatedAt": FieldValue.serverTimestamp(),
+                    "macSyncedAt": FieldValue.serverTimestamp(),
                     "reminderId": rid,
                     "title": title,
                     "status": completed ? 2 : 0,
@@ -4768,12 +4770,18 @@ actor FirebaseSyncService {
                 }
 
                 var pushMeta: [String: Any] = [
+                    "branch": "mergeReminder",
                     "title": title,
                     "calendar": calendarTitle,
                     "status": completed ? "complete" : "open"
                 ]
                 if let dueDate { pushMeta["due"] = isoFormatter.string(from: dueDate) }
                 if !reminderTags.isEmpty { pushMeta["tags"] = reminderTags }
+                if let prevServerUpdated = matchedTask.serverUpdatedAt {
+                    pushMeta["previousServerUpdatedAt"] = isoFormatter.string(from: prevServerUpdated)
+                }
+                if let aiRank = matchedTask.aiPriorityRank { pushMeta["aiPriorityRank"] = aiRank }
+                if let aiTop3Date = matchedTask.aiTop3Date, !aiTop3Date.isEmpty { pushMeta["aiTop3Date"] = aiTop3Date }
                 let context = await fetchStoryContext(storyId: matchedTask.storyId, goalId: matchedTask.goalId)
                 if let storyRef = context.storyRef { pushMeta["storyRef"] = storyRef }
                 if let goalRef = context.goalRef { pushMeta["goalRef"] = goalRef }
