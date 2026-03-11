@@ -5136,7 +5136,7 @@ actor FirebaseSyncService {
                                 reminder.url = url
                                 needsSave = true
                             }
-                            if includeMetadataInNotes, !tagsStringConst.isEmpty {
+                            if !tagsStringConst.isEmpty {
                                 let list = tagsStringConst.split(separator: ",")
                                     .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                                     .filter { !$0.isEmpty }
@@ -5497,11 +5497,8 @@ actor FirebaseSyncService {
                         meta["type"] = fallbackType
                         metaChanged = true
                     }
-
-                    var tagChanged = false
-                if includeMetadataInNotes {
-                    tagChanged = await MainActor.run { reminder.rmbSetTagsList(newTags: tagListForMeta) }
-                }
+                var tagChanged = false
+                tagChanged = await MainActor.run { reminder.rmbSetTagsList(newTags: tagListForMeta) }
                 if tagChanged { reminderChanged = true }
 
                 // Always refresh the sync timestamp so notes reflect the latest push
