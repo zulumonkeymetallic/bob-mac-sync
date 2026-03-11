@@ -405,6 +405,11 @@ actor FirebaseSyncService {
         tags.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "top3" }
     }
 
+    private func hasStaleTop3Date(_ dateString: String?) -> Bool {
+        guard let dateString, !dateString.isEmpty else { return false }
+        return dateString.prefix(10) != todayIso()
+    }
+
     private func isDueToday(dueMillis: Double?, top3Date: String?) -> Bool {
         if let top3Date, !top3Date.isEmpty, top3Date.prefix(10) == todayIso() {
             return true
@@ -4740,13 +4745,18 @@ actor FirebaseSyncService {
                     workListName: workListName
                 )
 
-                let mergedTags: [String] = {
+                let staleTop3 = hasStaleTop3Date(matchedTask.aiTop3Date)
+
+                var mergedTags: [String] = {
                     var set = Set(stripParentTags(reminderTags, storyRef: parsed.meta["storyRef"], goalRef: parsed.meta["goalRef"]))
                     if let tname = parsed.meta["theme"], !tname.isEmpty { set.insert(tname) }
                     if let sprintName = parsed.meta["sprint"],
                        let sprintTag = makeSprintTag(from: sprintName) { set.insert(sprintTag) }
                     return Array(set)
                 }()
+                if staleTop3 {
+                    mergedTags = applyPriorityTags(mergedTags, isTop3: false, dueToday: false)
+                }
 
                 var data: [String: Any] = [
                     "updatedAt": FieldValue.serverTimestamp(),
@@ -4780,6 +4790,7 @@ actor FirebaseSyncService {
                 if let prevServerUpdated = matchedTask.serverUpdatedAt {
                     pushMeta["previousServerUpdatedAt"] = isoFormatter.string(from: prevServerUpdated)
                 }
+                pushMeta["staleTop3Reconciled"] = staleTop3
                 if let aiRank = matchedTask.aiPriorityRank { pushMeta["aiPriorityRank"] = aiRank }
                 if let aiTop3Date = matchedTask.aiTop3Date, !aiTop3Date.isEmpty { pushMeta["aiTop3Date"] = aiTop3Date }
                 let context = await fetchStoryContext(storyId: matchedTask.storyId, goalId: matchedTask.goalId)
@@ -4963,7 +4974,13 @@ actor FirebaseSyncService {
                     if let itemType { tagSet.insert(itemType) }
                     if let tname = context.themeName { tagSet.insert(tname) }
                     if let sprintTag = makeSprintTag(from: context.sprintName) { tagSet.insert(sprintTag) }
-                    let tagList = Array(tagSet).sorted()
+                    var tagList = Array(tagSet).sorted()
+                    let staleTop3 = hasStaleTop3Date(task.aiTop3Date)
+                    if staleTop3 {
+                        tagList = applyPriorityTags(tagList, isTop3: false, dueToday: false)
+                        pushData["aiTop3ForDay"] = false
+                        pushData["aiTop3Date"] = FieldValue.delete()
+                    }
                     if !tagList.isEmpty { pushData["tags"] = tagList }
 
                     // Bump serverUpdatedAt so delta filter (server clock) sees this change
@@ -4989,6 +5006,7 @@ actor FirebaseSyncService {
                     if let aiBucketVal { logMeta["aiPriorityBucket"] = aiBucketVal }
                     if let aiRankVal { logMeta["aiPriorityRank"] = aiRankVal }
                     if let aiReasonVal, !aiReasonVal.isEmpty { logMeta["aiPriorityReason"] = aiReasonVal }
+                    logMeta["staleTop3Reconciled"] = staleTop3
                     let taskRefValue = (task.reference?.isEmpty == false) ? (task.reference ?? task.id) : task.id
                     logMeta["taskRef"] = taskRefValue
                     if let goalRef = context.goalRef { logMeta["goalRef"] = goalRef }
