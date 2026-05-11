@@ -20,6 +20,11 @@ struct FbTask {
     let status: Any?
     let storyId: String?
     let goalId: String?
+    let storyRef: String?
+    let goalRef: String?
+    let theme: String?
+    let sprintId: String?
+    let sprintName: String?
     let reference: String?
     let sourceRef: String?
     let externalId: String?
@@ -33,6 +38,23 @@ struct FbTask {
     let deletedFlag: Any?
     let reminderSyncDirective: String?
     let priority: Int?
+    let itemType: String?
+    // Due-date lock fields (set by mac_sync when user edits a date in Reminders)
+    let dueDateLocked: Bool?
+    let lockDueDate: Bool?
+    let dueDateLockSource: String?
+}
+
+struct FbStory {
+    let id: String
+    let title: String
+    let storyRef: String
+    let goalRef: String?
+    let theme: String?
+    let sprintId: String?
+    let sprintName: String?
+    let updatedAt: Date?
+    let status: Any?
 }
 
 // swiftlint:disable cyclomatic_complexity function_body_length type_body_length file_length large_tuple
@@ -65,9 +87,11 @@ actor FirebaseSyncService {
         var goalRef: String?
     }
 
-    private struct GoalContext {
-        var ref: String?
-        var themeName: String?
+    private enum SyncedItemType: String {
+        case story
+        case task
+        case chore
+        case habit
     }
 
     private let isoFormatter: ISO8601DateFormatter = {
@@ -75,38 +99,6 @@ actor FirebaseSyncService {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
-
-    // Resolve sprint by a due date: find sprint owned by user where startDate <= due <= endDate
-    private func resolveSprintForDueDate(due: Date, ownerUid: String, db: Firestore) async -> (id: String, name: String)? {
-        func toDate(_ any: Any?) -> Date? {
-            if let ts = any as? Timestamp { return ts.dateValue() }
-            if let dateValue = any as? Date { return dateValue }
-            if let ms = any as? Double { return Date(timeIntervalSince1970: ms / 1_000.0) }
-            if let str = any as? String { return isoFormatter.date(from: str) }
-            if let num = any as? NSNumber { return Date(timeIntervalSince1970: num.doubleValue / 1_000.0) }
-            return nil
-        }
-        do {
-            let query = db.collection("sprints")
-                .whereField("ownerUid", isEqualTo: ownerUid)
-                .whereField("startDate", isLessThanOrEqualTo: due)
-                .order(by: "startDate", descending: true)
-                .limit(to: 5)
-            let snap = try await query.getDocuments()
-            for doc in snap.documents {
-                let data = doc.data()
-                let end = toDate(data["endDate"]) ?? toDate(data["end"]) ?? toDate(data["end_at"]) ?? Date.distantPast
-                if end >= due {
-                    let rawName = (data["name"] as? String) ?? (data["title"] as? String)
-                    let resolvedName = rawName ?? doc.documentID
-                    return (doc.documentID, resolvedName)
-                }
-            }
-        } catch {
-            recordPermissionIfNeeded(error, context: "sprints(byDue)")
-        }
-        return nil
-    }
 
     // Lightweight local triage classification to avoid extra target wiring.
     private enum RmbPersona { case personal, work, unknown }
@@ -188,16 +180,73 @@ actor FirebaseSyncService {
         )
     }
 
-    private func inferItemType(calendarTitle: String, tags: [String]) -> String? {
+    private func normalizedItemType(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let lowered = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch lowered {
+        case "story", "stories":
+            return SyncedItemType.story.rawValue
+        case "task", "tasks":
+            return SyncedItemType.task.rawValue
+        case "chore", "chores":
+            return SyncedItemType.chore.rawValue
+        case "habit", "habits", "routine", "routines":
+            return SyncedItemType.habit.rawValue
+        default:
+            return nil
+        }
+    }
+
+    private func inferItemType(calendarTitle: String, tags: [String], fallback: SyncedItemType = .task) -> String {
         let lowerTitle = calendarTitle.lowercased()
-        let lowerTags = tags.map { $0.lowercased() }
-        if lowerTitle.contains("chore") || lowerTags.contains(where: { $0 == "chore" }) {
-            return "chore"
+        let normalizedTags = Set(tags.compactMap(normalizedItemType))
+
+        if normalizedTags.contains(SyncedItemType.story.rawValue) || lowerTitle.contains("story") {
+            return SyncedItemType.story.rawValue
         }
-        if lowerTitle.contains("routine") || lowerTags.contains(where: { $0 == "routine" }) {
-            return "routine"
+        if normalizedTags.contains(SyncedItemType.chore.rawValue) || lowerTitle.contains("chore") {
+            return SyncedItemType.chore.rawValue
         }
-        return nil
+        if normalizedTags.contains(SyncedItemType.habit.rawValue) || lowerTitle.contains("habit") || lowerTitle.contains("routine") {
+            return SyncedItemType.habit.rawValue
+        }
+        if normalizedTags.contains(SyncedItemType.task.rawValue) || lowerTitle.contains("task") {
+            return SyncedItemType.task.rawValue
+        }
+        return fallback.rawValue
+    }
+
+    private func mergedItemTags(_ tags: [String], itemType: String?, context: StoryContext? = nil) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+
+        func append(_ value: String?) {
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return }
+            let key = value.lowercased()
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            result.append(value)
+        }
+
+        tags.forEach(append)
+        append(normalizedItemType(itemType))
+        append(context?.storyRef)
+        append(context?.goalRef)
+        append(context?.themeName)
+        append(makeSprintTag(from: context?.sprintName))
+        return result
+    }
+
+    private func isStandaloneStoryReminder(meta: [String: String]) -> Bool {
+        let itemType = normalizedItemType(meta["type"])
+        let hasStoryRef = !(meta["storyRef"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasTaskRef = !(meta["taskRef"]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        return itemType == SyncedItemType.story.rawValue || (hasStoryRef && !hasTaskRef)
+    }
+
+    private func supportsRecurringReminderSync(itemType: String) -> Bool {
+        let normalized = normalizedItemType(itemType)
+        return normalized == SyncedItemType.chore.rawValue || normalized == SyncedItemType.habit.rawValue
     }
 
     private func recurrencePayload(for reminder: EKReminder) -> [String: Any]? {
@@ -316,6 +365,16 @@ actor FirebaseSyncService {
     private func nonEmpty(_ value: String?) -> String? {
         guard let value, !value.isEmpty else { return nil }
         return value
+    }
+
+    private func contextFromTask(_ task: FbTask) -> StoryContext {
+        StoryContext(
+            storyRef: nonEmpty(task.storyRef),
+            themeName: nonEmpty(task.theme),
+            sprintId: nonEmpty(task.sprintId),
+            sprintName: nonEmpty(task.sprintName),
+            goalRef: nonEmpty(task.goalRef)
+        )
     }
 
     private func makeSprintTag(from sprintName: String?) -> String? {
@@ -455,6 +514,8 @@ actor FirebaseSyncService {
                 meta["taskRef"] = String(line.dropFirst("#task: ".count))
             } else if line.hasPrefix("#goal: ") {
                 meta["goalRef"] = String(line.dropFirst("#goal: ".count))
+            } else if line.hasPrefix("#type: ") {
+                meta["type"] = String(line.dropFirst("#type: ".count))
             } else if line.hasPrefix("#tags: ") {
                 meta["tags"] = String(line.dropFirst("#tags: ".count))
             } else if line.hasPrefix("#listId: ") {
@@ -515,6 +576,7 @@ actor FirebaseSyncService {
                 "taskRef",
                 "storyRef",
                 "goalRef",
+                "type",
                 "status",
                 "due",
                 "synced",
@@ -533,6 +595,7 @@ actor FirebaseSyncService {
             if let story = meta["storyRef"], !story.isEmpty { metadataLines.append("#story: \(story)") }
             if let taskRef = meta["taskRef"], !taskRef.isEmpty { metadataLines.append("#task: \(taskRef)") }
             if let goalRef = meta["goalRef"], !goalRef.isEmpty { metadataLines.append("#goal: \(goalRef)") }
+            if let itemType = meta["type"], !itemType.isEmpty { metadataLines.append("#type: \(itemType)") }
             if let tags = meta["tags"], !tags.isEmpty { metadataLines.append("#tags: \(tags)") }
             // Do not include listId in the note metadata lines to keep it human-friendly
             if let listName = meta["list"], !listName.isEmpty { metadataLines.append("#list: \(listName)") }
@@ -573,6 +636,10 @@ actor FirebaseSyncService {
 
     nonisolated private func taskDeepLink(for taskRef: String) -> URL? {
         return URL(string: "https://bob.jc1.tech/tasks/\(taskRef)")
+    }
+
+    nonisolated private func storyDeepLink(for storyRef: String) -> URL? {
+        return URL(string: "https://bob.jc1.tech/stories/\(storyRef)")
     }
 
     nonisolated private func activityDeepLink(for taskRef: String) -> URL? {
@@ -1187,10 +1254,10 @@ actor FirebaseSyncService {
             }
         }
         let inferredType = inferItemType(calendarTitle: calendarTitle, tags: reminderTags)
+        let syncedTags = mergedItemTags(reminderTags, itemType: inferredType)
         let recurrence = recurrencePayload(for: reminder)
         let now = Date()
-        // Batch writes are intentionally bypassed for new tasks so we can read the server-assigned ref immediately.
-        _ = batch
+        let writeBatch = batch
 
         // Create a document reference and a local human-readable ref (TK-XXXXX)
         let doc = db.collection("tasks").document()
@@ -1211,7 +1278,7 @@ actor FirebaseSyncService {
             "serverUpdatedAt": FieldValue.serverTimestamp(),
             "reminderListId": calendarIdentifier,
             "reminderListName": calendarTitle,
-            "tags": reminderTags,
+            "tags": syncedTags,
             "ref": localRef,
             "reference": localRef,
             "code": localRef
@@ -1239,16 +1306,8 @@ actor FirebaseSyncService {
             data["completedAt"] = nowMs
             data["deleteAfter"] = nowMs + completedTaskTTL // +30 days
         }
-        // Sprint by due-date (fallback when no story)
-        var resolvedSprint: (id: String, name: String)? = nil
-        if let due = dueDate {
-            if let sprint = await resolveSprintForDueDate(due: due, ownerUid: ownerUid, db: db) {
-                data["sprintId"] = sprint.id
-                resolvedSprint = sprint
-            }
-        }
         if let dueMillis { data["dueDate"] = dueMillis }
-        if let inferredType { data["type"] = inferredType }
+        data["type"] = inferredType
         if let recurrence { data["recurrence"] = recurrence }
         // Convenience fields for simple querying
         if let freq = recurrence?["frequency"] as? String { data["repeatFrequency"] = freq }
@@ -1256,7 +1315,11 @@ actor FirebaseSyncService {
         if let days = recurrence?["daysOfWeek"] { data["repeatDaysOfWeek"] = days }
 
         if !dryRun {
-            try await doc.setData(data)
+            if let writeBatch {
+                writeBatch.setData(data, forDocument: doc)
+            } else {
+                try await doc.setData(data)
+            }
             let titleForLog = title
                 .replacingOccurrences(of: "\n", with: " ")
                 .replacingOccurrences(of: "\r", with: " ")
@@ -1279,15 +1342,12 @@ actor FirebaseSyncService {
         ]
         // Enrich BOB note for better traceability/dedup hints
         meta["taskRef"] = resolvedRef
+        meta["type"] = inferredType
         if let dueMillis { meta["due"] = isoString(forMillis: dueMillis) }
         meta["list"] = calendarTitle
         meta["listId"] = calendarIdentifier
-        if let sprintName = resolvedSprint?.name { meta["sprint"] = sprintName }
-        if let sprintId = resolvedSprint?.id { meta["sprintId"] = sprintId }
         // Build enriched tag list for note
-        var tagSet = Set(reminderTags)
-        if let sprintName = resolvedSprint?.name, let sprintTag = makeSprintTag(from: sprintName) { tagSet.insert(sprintTag) }
-        let tagList = Array(tagSet).sorted()
+        let tagList = syncedTags.sorted()
         if !tagList.isEmpty { meta["tags"] = tagList.joined(separator: ", ") }
 
         let includeMetadata = await shouldIncludeBobMetadataInNotes()
@@ -1310,8 +1370,7 @@ actor FirebaseSyncService {
         ]
         if let dueMillis { importMeta["due"] = isoString(forMillis: dueMillis) }
         if !tagList.isEmpty { importMeta["tags"] = tagList }
-        if let sprintName = resolvedSprint?.name { importMeta["sprint"] = sprintName }
-        if let inferredType { importMeta["type"] = inferredType }
+        importMeta["type"] = inferredType
         if let recurrence { importMeta["recurrence"] = recurrence }
         importMeta["taskRef"] = resolvedRef
         SyncLogService.shared.logSyncDetail(
@@ -1335,6 +1394,11 @@ actor FirebaseSyncService {
             status: isCompleted ? 2 : 0,
             storyId: nil,
             goalId: nil,
+            storyRef: nil,
+            goalRef: nil,
+            theme: nil,
+            sprintId: nil,
+            sprintName: nil,
             reference: resolvedRef,
             sourceRef: nil,
             externalId: nil,
@@ -1342,11 +1406,15 @@ actor FirebaseSyncService {
             serverUpdatedAt: nil,
             reminderListId: calendarIdentifier,
             reminderListName: calendarTitle,
-            tags: reminderTags,
+            tags: syncedTags,
             convertedToStoryId: nil,
             deletedFlag: nil,
             reminderSyncDirective: nil,
-            priority: bobPriority
+            priority: bobPriority,
+            itemType: inferredType,
+            dueDateLocked: nil,
+            lockDueDate: nil,
+            dueDateLockSource: nil
         )
     }
 
@@ -1430,6 +1498,9 @@ actor FirebaseSyncService {
             tags = []
         }
 
+        let sprintName = nonEmpty(data["sprintName"] as? String)
+            ?? nonEmpty(data["sprint"] as? String)
+
         return FbTask(
             id: doc.documentID,
             title: data["title"] as? String ?? "Task",
@@ -1442,6 +1513,11 @@ actor FirebaseSyncService {
             status: data["status"],
             storyId: nonEmpty(data["storyId"] as? String),
             goalId: nonEmpty(data["goalId"] as? String),
+            storyRef: nonEmpty(data["storyRef"] as? String),
+            goalRef: nonEmpty(data["goalRef"] as? String),
+            theme: nonEmpty(data["theme"] as? String),
+            sprintId: nonEmpty(data["sprintId"] as? String),
+            sprintName: sprintName,
             reference: (data["reference"] as? String) ?? (data["ref"] as? String) ?? (data["shortId"] as? String) ?? (data["code"] as? String),
             sourceRef: (data["sourceRef"] as? String) ?? (data["source_reference"] as? String),
             externalId: (data["taskId"] as? String) ?? (data["externalId"] as? String),
@@ -1453,7 +1529,46 @@ actor FirebaseSyncService {
             convertedToStoryId: data["convertedToStoryId"] as? String,
             deletedFlag: data["deleted"],
             reminderSyncDirective: data["reminderSyncDirective"] as? String,
-            priority: data["priority"] as? Int
+            priority: data["priority"] as? Int,
+            itemType: normalizedItemType(data["type"] as? String),
+            dueDateLocked: data["dueDateLocked"] as? Bool,
+            lockDueDate: data["lockDueDate"] as? Bool,
+            dueDateLockSource: data["dueDateLockSource"] as? String
+        )
+    }
+
+    private func toStory(_ doc: DocumentSnapshot) -> FbStory? {
+        let data = doc.data() ?? [:]
+        let title = nonEmpty(data["title"] as? String)
+            ?? nonEmpty(data["name"] as? String)
+            ?? nonEmpty(data["story"] as? String)
+            ?? "Story"
+        let storyRef = nonEmpty(data["storyRef"] as? String)
+            ?? nonEmpty(data["reference"] as? String)
+            ?? nonEmpty(data["ref"] as? String)
+            ?? doc.documentID
+
+        let updatedAt: Date? = {
+            if let ts = data["updatedAt"] as? Timestamp { return ts.dateValue() }
+            if let date = data["updatedAt"] as? Date { return date }
+            if let number = data["updatedAt"] as? NSNumber { return Date(timeIntervalSince1970: number.doubleValue / 1_000.0) }
+            if let string = data["updatedAt"] as? String, let parsed = isoFormatter.date(from: string) { return parsed }
+            return nil
+        }()
+
+        let sprintName = nonEmpty(data["sprintName"] as? String)
+            ?? nonEmpty(data["sprint"] as? String)
+
+        return FbStory(
+            id: doc.documentID,
+            title: title,
+            storyRef: storyRef,
+            goalRef: nonEmpty(data["goalRef"] as? String),
+            theme: nonEmpty(data["theme"] as? String),
+            sprintId: nonEmpty(data["sprintId"] as? String),
+            sprintName: sprintName,
+            updatedAt: updatedAt,
+            status: data["status"]
         )
     }
 
@@ -1531,165 +1646,6 @@ actor FirebaseSyncService {
         var firestoreOnlyCount = 0
         var macOnlyCount = 0
 
-            var storyContextCache: [String: StoryContext] = [:]
-            var sprintCache: [String: String?] = [:]
-            var goalContextCache: [String: GoalContext] = [:]
-
-            // Prefetch story/goal contexts in chunked queries to reduce per-doc reads
-            func prefetchContexts(for tasks: [FbTask]) async {
-                let storyIds = Array(Set(tasks.compactMap { $0.storyId })).filter { !$0.isEmpty }
-                let goalIds = Array(Set(tasks.compactMap { $0.goalId })).filter { !$0.isEmpty }
-                let chunkSize = 10
-                var sprintIds: Set<String> = []
-                // Goals
-                if !goalIds.isEmpty {
-                    for start in stride(from: 0, to: goalIds.count, by: chunkSize) {
-                        let end = min(start + chunkSize, goalIds.count)
-                        let chunk = Array(goalIds[start..<end])
-                        do {
-                            let snap = try await db.collection("goals").whereField(FieldPath.documentID(), in: chunk).getDocuments()
-                            for doc in snap.documents {
-                                let data = doc.data()
-                                var ctx = GoalContext()
-                                ctx.ref = (data["reference"] as? String) ?? (data["ref"] as? String) ?? (data["code"] as? String) ?? doc.documentID
-                                ctx.themeName = (data["themeId"] as? String) ?? (data["theme"] as? String)
-                                goalContextCache[doc.documentID] = ctx
-                            }
-                        } catch { /* ignore prefetch errors; fall back to on-demand */ }
-                    }
-                }
-                // Stories
-                if !storyIds.isEmpty {
-                    for start in stride(from: 0, to: storyIds.count, by: chunkSize) {
-                        let end = min(start + chunkSize, storyIds.count)
-                        let chunk = Array(storyIds[start..<end])
-                        do {
-                            let snap = try await db.collection("stories").whereField(FieldPath.documentID(), in: chunk).getDocuments()
-                            for doc in snap.documents {
-                                let data = doc.data()
-                                var ctx = StoryContext()
-                                ctx.storyRef = (data["reference"] as? String) ?? (data["ref"] as? String) ?? (data["shortId"] as? String) ?? (data["code"] as? String) ?? doc.documentID
-                                ctx.themeName = (data["themeId"] as? String) ?? (data["theme"] as? String)
-                                if let sprintId = data["sprintId"] as? String { ctx.sprintId = sprintId; sprintIds.insert(sprintId) }
-                                storyContextCache[doc.documentID] = ctx
-                            }
-                        } catch { /* ignore prefetch errors; fall back to on-demand */ }
-                    }
-                }
-                // Sprints (prefetch names)
-                if !sprintIds.isEmpty {
-                    let allSprintIds = Array(sprintIds)
-                    for start in stride(from: 0, to: allSprintIds.count, by: chunkSize) {
-                        let end = min(start + chunkSize, allSprintIds.count)
-                        let chunk = Array(allSprintIds[start..<end])
-                        do {
-                            let snap = try await db.collection("sprints").whereField(FieldPath.documentID(), in: chunk).getDocuments()
-                            for doc in snap.documents {
-                                let data = doc.data()
-                                let name = (data["name"] as? String) ?? (data["title"] as? String)
-                                sprintCache[doc.documentID] = name
-                            }
-                        } catch { /* ignore prefetch errors; on-demand fetch will fill */ }
-                    }
-                }
-            }
-
-        func fetchSprintName(_ sprintId: String) async -> String? {
-            guard !sprintId.isEmpty else { return nil }
-            if let cached = sprintCache[sprintId] {
-                return cached ?? nil
-            }
-            do {
-                let sprintSnapshot = try await db.collection("sprints").document(sprintId).getDocument()
-                if let sprintData = sprintSnapshot.data() {
-                    let name = (sprintData["name"] as? String) ?? (sprintData["title"] as? String)
-                    sprintCache[sprintId] = name
-                    return name
-                }
-            } catch {
-                recordPermissionIfNeeded(error, context: "sprints/\(sprintId)")
-            }
-            sprintCache[sprintId] = nil
-            return nil
-        }
-
-        func fetchGoalContext(_ goalId: String) async -> GoalContext {
-            guard !goalId.isEmpty else { return GoalContext() }
-            if let cached = goalContextCache[goalId] {
-                return cached
-            }
-            var ctx = GoalContext()
-            do {
-                let goalSnapshot = try await db.collection("goals").document(goalId).getDocument()
-                if let goalData = goalSnapshot.data() {
-                    ctx.ref = (goalData["reference"] as? String) ?? (goalData["ref"] as? String) ?? (goalData["code"] as? String)
-                    ctx.themeName = (goalData["themeId"] as? String) ?? (goalData["theme"] as? String)
-                }
-            } catch {
-                recordPermissionIfNeeded(error, context: "goals/\(goalId)")
-            }
-            if ctx.ref == nil { ctx.ref = goalId }
-            goalContextCache[goalId] = ctx
-            return ctx
-        }
-
-        func fetchStoryContext(storyId: String?, goalId: String?) async -> StoryContext {
-            let normalizedStoryId = nonEmpty(storyId)
-            let normalizedGoalId = nonEmpty(goalId)
-
-            if let sid = normalizedStoryId, let cached = storyContextCache[sid] {
-                return cached
-            }
-
-            var ctx = StoryContext()
-            var resolvedGoalId = normalizedGoalId
-
-            if let sid = normalizedStoryId {
-                do {
-                    let storySnapshot = try await db.collection("stories").document(sid).getDocument()
-                    if let storyData = storySnapshot.data() {
-                        ctx.storyRef = (storyData["reference"] as? String) ?? (storyData["ref"] as? String) ?? (storyData["shortId"] as? String) ?? (storyData["code"] as? String) ?? sid
-                        ctx.themeName = (storyData["themeId"] as? String) ?? (storyData["theme"] as? String)
-                        if let sprintId = nonEmpty(storyData["sprintId"] as? String) {
-                            ctx.sprintId = sprintId
-                            ctx.sprintName = await fetchSprintName(sprintId)
-                        }
-                        if let goalFromStory = nonEmpty(storyData["goalId"] as? String) {
-                            resolvedGoalId = goalFromStory
-                        }
-                    } else {
-                        ctx.storyRef = sid
-                    }
-                } catch {
-                    recordPermissionIfNeeded(error, context: "stories/\(sid)")
-                    ctx.storyRef = sid
-                }
-            }
-
-            if let gid = resolvedGoalId {
-                let goalCtx = await fetchGoalContext(gid)
-                if ctx.themeName == nil { ctx.themeName = goalCtx.themeName }
-                ctx.goalRef = goalCtx.ref ?? gid
-            }
-
-            if ctx.sprintName == nil, let sprintId = ctx.sprintId {
-                ctx.sprintName = await fetchSprintName(sprintId)
-            }
-
-            if ctx.storyRef == nil, let sid = normalizedStoryId {
-                ctx.storyRef = sid
-            }
-            if ctx.goalRef == nil, let gid = normalizedGoalId {
-                ctx.goalRef = gid
-            }
-
-            if let sid = normalizedStoryId {
-                storyContextCache[sid] = ctx
-            }
-
-            return ctx
-        }
-
         do {
             // Load candidate tasks
             let queryStart = Date()
@@ -1735,8 +1691,6 @@ actor FirebaseSyncService {
             var tasks = taskQuerySnapshot.documents.compactMap(toTask)
             // Prepare a single write batch early so imports and merges share one commit
             let batch = db.batch()
-            // Prefetch related contexts in bulk to minimize per-doc reads
-            await prefetchContexts(for: tasks)
             let tasksWithoutReminders = tasks.filter { $0.reminderId == nil && !isDone($0.status) }
             SyncLogService.shared.logEvent(
                 tag: "sync",
@@ -1787,7 +1741,7 @@ actor FirebaseSyncService {
 
             func restoreReminderMetadata(for reminder: EKReminder, task: FbTask, existingNotes: String?, previousTag: String?, userLines: [String]) async {
                 let includeMetadata = await shouldIncludeBobMetadataInNotes()
-                let context = await fetchStoryContext(storyId: task.storyId, goalId: task.goalId)
+                let context = contextFromTask(task)
                 let calendarInfo = await MainActor.run { (id: reminder.calendar.calendarIdentifier, name: reminder.calendar.title) }
                 var meta: [String: String] = [
                     "status": statusString(for: task.status),
@@ -1802,17 +1756,13 @@ actor FirebaseSyncService {
                 if let theme = context.themeName { meta["theme"] = theme }
                 if let sprint = context.sprintName { meta["sprint"] = sprint }
                 if let sprintId = context.sprintId { meta["sprintId"] = sprintId }
+                if let itemType = task.itemType { meta["type"] = itemType }
                 let taskRefValue = (task.reference?.isEmpty == false) ? task.reference! : task.id
                 meta["taskRef"] = taskRefValue
                 meta["list"] = task.reminderListName ?? calendarInfo.name
                 meta["listId"] = task.reminderListId ?? calendarInfo.id
                 // Compose enriched tags for note (#tags: ...)
-                var tagSet = Set(task.tags)
-                if let sref = context.storyRef { tagSet.insert(sref) }
-                if let gref = context.goalRef { tagSet.insert(gref) }
-                if let tname = context.themeName { tagSet.insert(tname) }
-                if let sprintTag = makeSprintTag(from: context.sprintName) { tagSet.insert(sprintTag) }
-                let tagList = Array(tagSet).sorted()
+                let tagList = mergedItemTags(task.tags, itemType: task.itemType, context: context).sorted()
                 if !tagList.isEmpty { meta["tags"] = tagList.joined(separator: ", ") }
 
                 let rebuiltNotes = composeBobNote(meta: meta, userLines: userLines, includeMetadataBlock: includeMetadata)
@@ -1846,6 +1796,7 @@ actor FirebaseSyncService {
                     "status": meta["status"] ?? "unknown",
                     "calendar": meta["list"] ?? calendarInfo.name
                 ]
+                if let itemType = task.itemType { detailMeta["type"] = itemType }
                 if let due = task.dueDate { detailMeta["due"] = isoString(forMillis: due) }
                 if let storyRef = context.storyRef { detailMeta["storyRef"] = storyRef }
                 if let goalRef = context.goalRef { detailMeta["goalRef"] = goalRef }
@@ -1888,7 +1839,8 @@ actor FirebaseSyncService {
                 if let rules = reminder.recurrenceRules, !rules.isEmpty {
                     let calendarName = await MainActor.run { reminder.calendar.title }
                     let reminderTags = await MainActor.run { reminder.rmbCurrentTags() }
-                    if inferItemType(calendarTitle: calendarName, tags: reminderTags) == nil {
+                    let itemType = inferItemType(calendarTitle: calendarName, tags: reminderTags)
+                    if !supportsRecurringReminderSync(itemType: itemType) {
                         // Count as skipped import due to recurrence (non-chore/routine)
                         let titleText = await MainActor.run { reminder.title ?? "" }
                         let cal = await MainActor.run { reminder.calendar.title }
@@ -1903,6 +1855,9 @@ actor FirebaseSyncService {
 
                 let notes = await MainActor.run { reminder.notes }
                 let parsed = parseBobNote(notes: notes)
+                if isStandaloneStoryReminder(meta: parsed.meta) {
+                    continue
+                }
                 if let taskId = parsed.meta["taskId"], !taskId.isEmpty {
                     existingTaskIds.insert(taskId)
 
@@ -1959,6 +1914,11 @@ actor FirebaseSyncService {
                             status: nil,
                             storyId: nil,
                             goalId: nil,
+                            storyRef: nil,
+                            goalRef: nil,
+                            theme: nil,
+                            sprintId: nil,
+                            sprintName: nil,
                             reference: nil,
                             sourceRef: nil,
                             externalId: nil,
@@ -1970,7 +1930,11 @@ actor FirebaseSyncService {
                             convertedToStoryId: nil,
                             deletedFlag: nil,
                             reminderSyncDirective: nil,
-                            priority: nil
+                            priority: nil,
+                            itemType: normalizedItemType(parsed.meta["type"]),
+                            dueDateLocked: nil,
+                            lockDueDate: nil,
+                            dueDateLockSource: nil
                         )
                         repairs += 1
                         await restoreReminderMetadata(
@@ -2037,7 +2001,8 @@ actor FirebaseSyncService {
                 if let rules = reminder.recurrenceRules, !rules.isEmpty {
                     let calTitle = await MainActor.run { reminder.calendar.title }
                     let tags = await MainActor.run { reminder.rmbCurrentTags() }
-                    if inferItemType(calendarTitle: calTitle, tags: tags) == nil { continue }
+                    let itemType = inferItemType(calendarTitle: calTitle, tags: tags)
+                    if !supportsRecurringReminderSync(itemType: itemType) { continue }
                 }
 
                 // Optional triage classification + routing before import
@@ -2328,7 +2293,7 @@ actor FirebaseSyncService {
                         if !dryRun {
                             try await db.collection("tasks").document(canonical.id).setData(data, merge: true)
                         }
-                        let ctx = await fetchStoryContext(storyId: canonical.storyId, goalId: canonical.goalId)
+                        let ctx = contextFromTask(canonical)
                         var meta: [String: String] = [
                             "status": await MainActor.run { reminder.isCompleted } ? "complete" : "open",
                             "synced": isoNow(),
@@ -2658,7 +2623,7 @@ actor FirebaseSyncService {
             }
 
             for task in toCreate {
-                let context = await fetchStoryContext(storyId: task.storyId, goalId: task.goalId)
+                let context = contextFromTask(task)
                 let themeName = context.themeName
                 let sprintName = context.sprintName
                 let sprintTag = makeSprintTag(from: sprintName)
@@ -2752,7 +2717,8 @@ actor FirebaseSyncService {
                 if let sprintName { noteMeta["sprint"] = sprintName }
                 if let sid = context.sprintId { noteMeta["sprintId"] = sid }
                 if let themeName { noteMeta["theme"] = themeName }
-                var tagCandidates: [String] = task.tags
+                if let itemType = task.itemType { noteMeta["type"] = itemType }
+                var tagCandidates: [String] = mergedItemTags(task.tags, itemType: task.itemType, context: context)
                 if let sprintTag { tagCandidates.append(sprintTag) } else if let sprintName { tagCandidates.append(sprintName) }
                 if let storyRef { tagCandidates.append("story-\(storyRef)") }
                 if let goalRef { tagCandidates.append("goal-\(goalRef)") }
@@ -2765,11 +2731,6 @@ actor FirebaseSyncService {
                 let reminderToCreate = rmb
                 let rid: String? = await MainActor.run {
                     guard !dryRun, let saved = RemindersService.shared.createNew(with: reminderToCreate, in: cal) else { return nil }
-                    // Set a complete #tags list rather than repeatedly overwriting
-                    if includeMetadata {
-                        _ = saved.rmbSetTagsList(newTags: tagsForReminder)
-                    }
-                    RemindersService.shared.save(reminder: saved)
                     return saved.calendarItemIdentifier
                 }
                 var creationMeta: [String: Any] = [
@@ -2782,6 +2743,7 @@ actor FirebaseSyncService {
                 if let sprintName { creationMeta["sprint"] = sprintName }
                 if let storyRef { creationMeta["storyRef"] = storyRef }
                 if let goalRef { creationMeta["goalRef"] = goalRef }
+                if let itemType = task.itemType { creationMeta["type"] = itemType }
                 creationMeta["taskRef"] = taskRefValue
                 if let gid = task.goalId { creationMeta["goalId"] = gid }
                 if !tagsForReminder.isEmpty { creationMeta["tags"] = tagsForReminder }
@@ -2817,6 +2779,11 @@ actor FirebaseSyncService {
                         status: task.status,
                         storyId: task.storyId,
                         goalId: task.goalId,
+                        storyRef: task.storyRef,
+                        goalRef: task.goalRef,
+                        theme: task.theme,
+                        sprintId: task.sprintId,
+                        sprintName: task.sprintName,
                         reference: task.reference,
                         sourceRef: nil,
                         externalId: nil,
@@ -2828,7 +2795,11 @@ actor FirebaseSyncService {
                         convertedToStoryId: task.convertedToStoryId,
                         deletedFlag: task.deletedFlag,
                         reminderSyncDirective: task.reminderSyncDirective,
-                        priority: task.priority
+                        priority: task.priority,
+                        itemType: task.itemType,
+                        dueDateLocked: task.dueDateLocked,
+                        lockDueDate: task.lockDueDate,
+                        dueDateLockSource: task.dueDateLockSource
                     )
                 }
             }
@@ -2907,22 +2878,21 @@ actor FirebaseSyncService {
                 }
 
                 let mergedTags: [String] = {
-                    var set = Set(reminderTags)
-                    if let sref = parsed.meta["storyRef"], !sref.isEmpty { set.insert(sref) }
-                    if let gref = parsed.meta["goalRef"], !gref.isEmpty { set.insert(gref) }
-                    if let tname = parsed.meta["theme"], !tname.isEmpty { set.insert(tname) }
-                    if let sprintName = parsed.meta["sprint"], let sprintTag = makeSprintTag(from: sprintName) { set.insert(sprintTag) }
-                    return Array(set)
+                    let type = inferItemType(calendarTitle: calendarTitle, tags: reminderTags)
+                    let context = contextFromTask(matchedTask)
+                    return mergedItemTags(reminderTags, itemType: type, context: context)
                 }()
 
                 var data: [String: Any] = [
                     "updatedAt": FieldValue.serverTimestamp(),
+                    "serverUpdatedAt": FieldValue.serverTimestamp(),
                     "reminderId": rid,
                     "title": title,
                     "status": completed ? 2 : 0,
                     "reminderListId": calendarIdentifier,
                     "reminderListName": calendarTitle,
-                    "tags": mergedTags
+                    "tags": mergedTags,
+                    "type": inferItemType(calendarTitle: calendarTitle, tags: reminderTags)
                 ]
                 if let dueDate {
                     data["dueDate"] = dueDate.timeIntervalSince1970 * 1_000.0
@@ -2940,9 +2910,24 @@ actor FirebaseSyncService {
                 ]
                 if let dueDate { pushMeta["due"] = isoFormatter.string(from: dueDate) }
                 if !reminderTags.isEmpty { pushMeta["tags"] = reminderTags }
-                let context = await fetchStoryContext(storyId: matchedTask.storyId, goalId: matchedTask.goalId)
-                if let storyRef = context.storyRef { pushMeta["storyRef"] = storyRef }
-                if let goalRef = context.goalRef { pushMeta["goalRef"] = goalRef }
+                let context = contextFromTask(matchedTask)
+                if let storyRef = context.storyRef {
+                    data["storyRef"] = storyRef
+                    pushMeta["storyRef"] = storyRef
+                }
+                if let goalRef = context.goalRef {
+                    data["goalRef"] = goalRef
+                    pushMeta["goalRef"] = goalRef
+                }
+                if let theme = context.themeName {
+                    data["theme"] = theme
+                    pushMeta["theme"] = theme
+                }
+                if let sprintId = context.sprintId { data["sprintId"] = sprintId }
+                if let sprintName = context.sprintName {
+                    data["sprintName"] = sprintName
+                    pushMeta["sprint"] = sprintName
+                }
                 let taskRefValue = (matchedTask.reference?.isEmpty == false) ? matchedTask.reference! : matchedTask.id
                 pushMeta["taskRef"] = taskRefValue
                 SyncLogService.shared.logSyncDetail(direction: .toBob, action: "mergeReminder", taskId: matchedTask.id, storyId: matchedTask.storyId, metadata: pushMeta, dryRun: dryRun)
@@ -2975,7 +2960,7 @@ actor FirebaseSyncService {
                     }
                 }
 
-                let context = await fetchStoryContext(storyId: task.storyId, goalId: task.goalId)
+                let context = contextFromTask(task)
 
                 let notes = await MainActor.run { reminder.notes }
                 var (meta, userLines) = parseBobNote(notes: notes)
@@ -3012,6 +2997,7 @@ actor FirebaseSyncService {
                         "status": reminderCompleted ? 2 : 0,
                         "reminderId": rid
                     ]
+                    let itemType = inferItemType(calendarTitle: currentCalendarTitle, tags: reminderTags)
                     if reminderCompleted {
                         let nowMs = Date().timeIntervalSince1970 * 1000.0
                         pushData["completedAt"] = nowMs
@@ -3021,14 +3007,37 @@ actor FirebaseSyncService {
                         pushData["deleteAfter"] = FieldValue.delete()
                     }
                     if let due = reminderDueDate {
-                        pushData["dueDate"] = due.timeIntervalSince1970 * 1_000.0
+                        let reminderDueMs = due.timeIntervalSince1970 * 1_000.0
+                        pushData["dueDate"] = reminderDueMs
+                        // Lock the due date when the user has set a different date in Reminders
+                        let existingDueMs = task.dueDate ?? 0.0
+                        if abs(reminderDueMs - existingDueMs) > 1000 {
+                            pushData["dueDateLocked"] = true
+                            pushData["lockDueDate"] = true
+                            pushData["dueDateReason"] = "user_reminder_sync"
+                            pushData["dueDateLockSource"] = "mac_sync"
+                            pushData["dueDateLockedAt"] = FieldValue.serverTimestamp()
+                            pushData["dueDateUpdatedBy"] = "mac_sync"
+                            pushData["dueDateUpdatedSource"] = "reminders_user_edit"
+                            pushData["dueDateUpdatedAt"] = FieldValue.serverTimestamp()
+                        }
                     } else {
                         pushData["dueDate"] = FieldValue.delete()
+                        // If the user cleared the due date, remove the lock too
+                        if task.dueDate != nil {
+                            pushData["dueDateLocked"] = FieldValue.delete()
+                            pushData["lockDueDate"] = FieldValue.delete()
+                            pushData["dueDateLockSource"] = FieldValue.delete()
+                            pushData["dueDateLockedAt"] = FieldValue.delete()
+                            pushData["dueDateUpdatedBy"] = "mac_sync"
+                            pushData["dueDateUpdatedSource"] = "reminders_user_clear"
+                            pushData["dueDateUpdatedAt"] = FieldValue.serverTimestamp()
+                        }
                     }
                     pushData["reminderListId"] = currentCalendarIdentifier
                     pushData["reminderListName"] = currentCalendarTitle
                     // Derive type + recurrence on reminder updates too
-                    if let itemType = inferItemType(calendarTitle: currentCalendarTitle, tags: reminderTags) { pushData["type"] = itemType }
+                    pushData["type"] = itemType
                     if let recurrence = recurrencePayload(for: reminder) {
                         pushData["recurrence"] = recurrence
                         if let freq = recurrence["frequency"] { pushData["repeatFrequency"] = freq }
@@ -3041,7 +3050,7 @@ actor FirebaseSyncService {
                         pushData["repeatDaysOfWeek"] = FieldValue.delete()
                     }
                     
-                    // Priority Sync (Apple -> BOB)
+                    // Priority sync only. #P1-#P5 markers represent Bob priority, not a Top 3 feature.
                     let applePrio = await MainActor.run { reminder.priority }
                     let bobPrio: Int
                     switch applePrio {
@@ -3056,24 +3065,13 @@ actor FirebaseSyncService {
 
                     if let storyRef = context.storyRef { pushData["storyRef"] = storyRef }
                     if let theme = context.themeName { pushData["theme"] = theme }
-                    var sprintIdToSet: String? = context.sprintId
-                    if sprintIdToSet == nil, let due = reminderDueDate {
-                        if let sprint = await resolveSprintForDueDate(due: due, ownerUid: user.uid, db: db) {
-                            sprintIdToSet = sprint.id
-                            meta["sprint"] = sprint.name
-                        }
-                    }
-                    if let sid = sprintIdToSet { pushData["sprintId"] = sid; meta["sprintId"] = sid }
+                    if let sid = context.sprintId { pushData["sprintId"] = sid; meta["sprintId"] = sid }
+                    if let sprintName = context.sprintName { pushData["sprintName"] = sprintName; meta["sprint"] = sprintName }
                     if let goalRef = context.goalRef { pushData["goalRef"] = goalRef }
                     if let taskRef = task.reference, !taskRef.isEmpty { pushData["reference"] = taskRef }
 
                     // Compose enriched tags for note metadata early so we can include in push + log
-                    var tagSet = Set(reminderTags)
-                    if let sref = context.storyRef { tagSet.insert(sref) }
-                    if let gref = context.goalRef { tagSet.insert(gref) }
-                    if let tname = context.themeName { tagSet.insert(tname) }
-                    if let sprintTag = makeSprintTag(from: context.sprintName) { tagSet.insert(sprintTag) }
-                    let tagList = Array(tagSet).sorted()
+                    let tagList = mergedItemTags(reminderTags, itemType: itemType, context: context).sorted()
                     if !tagList.isEmpty { pushData["tags"] = tagList }
 
                     // Bump serverUpdatedAt so delta filter (server clock) sees this change
@@ -3092,6 +3090,7 @@ actor FirebaseSyncService {
                     if let storyRef = context.storyRef { logMeta["storyRef"] = storyRef }
                     let taskRefValue = (task.reference?.isEmpty == false) ? task.reference! : task.id
                     logMeta["taskRef"] = taskRefValue
+                    logMeta["type"] = itemType
                     if let goalRef = context.goalRef { logMeta["goalRef"] = goalRef }
                     if !tagList.isEmpty { logMeta["tags"] = tagList }
                     SyncLogService.shared.logSyncDetail(direction: .toBob, action: "updateFromReminder", taskId: task.id, storyId: task.storyId, metadata: logMeta, dryRun: dryRun)
@@ -3101,6 +3100,7 @@ actor FirebaseSyncService {
                     if let due = reminderDueDate { meta["due"] = isoFormatter.string(from: due) } else { meta.removeValue(forKey: "due") }
                     meta["list"] = currentCalendarTitle
                     meta["listId"] = currentCalendarIdentifier
+                    meta["type"] = itemType
                     // meta tags already computed; mirror to note metadata
                     if !tagList.isEmpty { meta["tags"] = tagList.joined(separator: ", ") }
                     meta["synced"] = nowIso
@@ -3176,7 +3176,14 @@ actor FirebaseSyncService {
                         reminderChanged = true
                     }
 
-                    if let due = task.dueDate {
+                    // When mac_sync set the lock, Reminders holds the authoritative due date —
+                    // do not overwrite it back from Firestore even though Bob is "newer".
+                    let macSyncHoldsDueDateLock = task.dueDateLockSource == "mac_sync"
+                        && (task.dueDateLocked == true || task.lockDueDate == true)
+                    if macSyncHoldsDueDateLock {
+                        // Keep reminder's own due date; only update meta from Firestore
+                        if let due = task.dueDate { meta["due"] = isoString(forMillis: due) }
+                    } else if let due = task.dueDate {
                         let date = Date(timeIntervalSince1970: due / 1_000.0)
                         if reminderDueDate != date {
                             if !dryRun {
@@ -3201,7 +3208,7 @@ actor FirebaseSyncService {
                         reminderChanged = true
                     }
                     
-                    // Priority Sync (BOB -> Apple)
+                    // Priority sync only. #P1-#P5 markers represent Bob priority, not a Top 3 feature.
                     let targetApplePrio: Int
                     let priorityTag: String
                     switch task.priority ?? 3 {
@@ -3267,6 +3274,7 @@ actor FirebaseSyncService {
                     if let storyRef = context.storyRef { detailMeta["storyRef"] = storyRef }
                     let taskRefValue = (task.reference?.isEmpty == false) ? task.reference! : task.id
                     detailMeta["taskRef"] = taskRefValue
+                    if let itemType = task.itemType { detailMeta["type"] = itemType }
                     if let goalRef = context.goalRef { detailMeta["goalRef"] = goalRef }
                     let resolvedCalendarInfo = await MainActor.run { (id: reminder.calendar.calendarIdentifier, name: reminder.calendar.title) }
                     detailMeta["calendar"] = movedCalendarName ?? resolvedCalendarInfo.name
@@ -3274,21 +3282,17 @@ actor FirebaseSyncService {
                     SyncLogService.shared.logSyncDetail(direction: .toReminders, action: "updateReminderFromBob", taskId: task.id, storyId: task.storyId, metadata: detailMeta, dryRun: dryRun)
                     updatesFromBob += 1
                     // Keep reminder URL pointing at Bob task
-                    if !dryRun {
-                        let linkURL = taskDeepLink(for: taskRefValue)
+                    if !dryRun, let url = taskDeepLink(for: taskRefValue) {
                         await MainActor.run {
-                            if let url = linkURL, reminder.url != url {
+                            if reminder.url != url {
                                 reminder.url = url
-                                RemindersService.shared.save(reminder: reminder)
+                                reminderChanged = true
                             }
                         }
                     }
 
                     // Ensure Firestore tags inherit story/goal/theme and mark conversions
-                    var tagSet = Set(task.tags)
-                    if let sref = context.storyRef { tagSet.insert(sref) }
-                    if let gref = context.goalRef { tagSet.insert(gref) }
-                    if let tname = context.themeName { tagSet.insert(tname) }
+                    var tagSet = Set(mergedItemTags(task.tags, itemType: task.itemType, context: context))
                     if task.convertedToStoryId != nil { tagSet.insert("convertedtostory") }
                     if !dryRun {
                         let tagUpdate: [String: Any] = [
@@ -3329,6 +3333,11 @@ actor FirebaseSyncService {
                 } else if meta.removeValue(forKey: "storyRef") != nil {
                     metaChanged = true
                 }
+                if let itemType = task.itemType {
+                    if meta["type"] != itemType { meta["type"] = itemType; metaChanged = true }
+                } else if meta.removeValue(forKey: "type") != nil {
+                    metaChanged = true
+                }
                 let taskRefValue = (task.reference?.isEmpty == false) ? task.reference! : task.id
                 if meta["taskRef"] != taskRefValue {
                     meta["taskRef"] = taskRefValue
@@ -3356,11 +3365,7 @@ actor FirebaseSyncService {
                 }
 
                 // Compose enriched #tags line for the reminder note
-                var tagSetForMeta = Set(task.tags)
-                if let sref = context.storyRef { tagSetForMeta.insert(sref) }
-                if let gref = context.goalRef { tagSetForMeta.insert(gref) }
-                if let tname = context.themeName { tagSetForMeta.insert(tname) }
-                if let sprintTag = makeSprintTag(from: context.sprintName) { tagSetForMeta.insert(sprintTag) }
+                var tagSetForMeta = Set(mergedItemTags(task.tags, itemType: task.itemType, context: context))
                 let tagListForMeta = Array(tagSetForMeta).sorted()
                 if !tagListForMeta.isEmpty {
                     let joined = tagListForMeta.joined(separator: ", ")
@@ -3396,6 +3401,165 @@ actor FirebaseSyncService {
                 taskById[task.id] = task
             }
 
+            let syncTasklessStories = await MainActor.run { UserPreferences.shared.syncTasklessStories }
+            if syncTasklessStories {
+                let storiesWithTasks = Set(tasks.compactMap { $0.storyRef?.lowercased() })
+                var storyRemindersByRef: [String: EKReminder] = [:]
+                for reminder in all {
+                    let notes = await MainActor.run { reminder.notes }
+                    let parsed = parseBobNote(notes: notes)
+                    guard isStandaloneStoryReminder(meta: parsed.meta),
+                          let storyRef = parsed.meta["storyRef"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !storyRef.isEmpty else { continue }
+                    storyRemindersByRef[storyRef.lowercased()] = reminder
+                }
+
+                do {
+                    let storySnapshot = try await db.collection("stories")
+                        .whereField("ownerUid", isEqualTo: user.uid)
+                        .limit(to: 1000)
+                        .getDocuments()
+                    let stories = storySnapshot.documents.compactMap(toStory)
+                    var eligibleStoryRefs = Set<String>()
+
+                    for story in stories {
+                        let storyKey = story.storyRef.lowercased()
+                        guard !storiesWithTasks.contains(storyKey) else { continue }
+                        eligibleStoryRefs.insert(storyKey)
+
+                        let context = StoryContext(
+                            storyRef: story.storyRef,
+                            themeName: story.theme,
+                            sprintId: story.sprintId,
+                            sprintName: story.sprintName,
+                            goalRef: story.goalRef
+                        )
+
+                        let targetCalendar: EKCalendar? = await MainActor.run {
+                            if let themeName = story.theme {
+                                if let mappedId = UserPreferences.shared.themeCalendarMap[themeName],
+                                   let mapped = RemindersService.shared.getCalendar(withIdentifier: mappedId) {
+                                    return mapped
+                                }
+                                return RemindersService.shared.ensureCalendar(named: themeName)
+                            }
+                            return preferredCalendar ?? RemindersService.shared.getDefaultCalendar()
+                        }
+                        guard let targetCalendar else { continue }
+
+                        let noteTags = mergedItemTags([], itemType: SyncedItemType.story.rawValue, context: context).sorted()
+                        var meta: [String: String] = [
+                            "storyId": story.id,
+                            "storyRef": story.storyRef,
+                            "status": statusString(for: story.status),
+                            "synced": isoNow(),
+                            "type": SyncedItemType.story.rawValue,
+                            "list": targetCalendar.title,
+                            "listId": targetCalendar.calendarIdentifier
+                        ]
+                        if let goalRef = story.goalRef { meta["goalRef"] = goalRef }
+                        if let theme = story.theme { meta["theme"] = theme }
+                        if let sprintId = story.sprintId { meta["sprintId"] = sprintId }
+                        if let sprintName = story.sprintName { meta["sprint"] = sprintName }
+                        if !noteTags.isEmpty { meta["tags"] = noteTags.joined(separator: ", ") }
+
+                        let includeMetadata = await shouldIncludeBobMetadataInNotes()
+                        let rebuiltNotes = composeBobNote(meta: meta, userLines: [], includeMetadataBlock: includeMetadata)
+                        let linkURL = storyDeepLink(for: story.storyRef)
+
+                        if let existingReminder = storyRemindersByRef[storyKey] {
+                            let changed: Bool
+                            if dryRun {
+                                changed = false
+                            } else {
+                                changed = await MainActor.run { () -> Bool in
+                                    var changed = false
+                                    if existingReminder.title != story.title {
+                                        existingReminder.title = story.title
+                                        changed = true
+                                    }
+                                    if existingReminder.calendar.calendarIdentifier != targetCalendar.calendarIdentifier {
+                                        RemindersService.shared.move(reminder: existingReminder, to: targetCalendar)
+                                        changed = true
+                                    }
+                                    if existingReminder.isCompleted {
+                                        existingReminder.isCompleted = false
+                                        changed = true
+                                    }
+                                    if existingReminder.notes != rebuiltNotes {
+                                        existingReminder.notes = rebuiltNotes
+                                        changed = true
+                                    }
+                                    if let linkURL, existingReminder.url != linkURL {
+                                        existingReminder.url = linkURL
+                                        changed = true
+                                    }
+                                    if includeMetadata, existingReminder.rmbSetTagsList(newTags: noteTags) {
+                                        changed = true
+                                    }
+                                    if changed {
+                                        RemindersService.shared.save(reminder: existingReminder)
+                                    }
+                                    return changed
+                                }
+                            }
+                            if changed { updated += 1 }
+                            SyncLogService.shared.logSyncDetail(direction: .toReminders, action: "syncTasklessStoryReminder", taskId: nil, storyId: story.id, metadata: [
+                                "storyRef": story.storyRef,
+                                "title": story.title,
+                                "calendar": targetCalendar.title,
+                                "type": SyncedItemType.story.rawValue,
+                                "tags": noteTags
+                            ], dryRun: dryRun)
+                        } else {
+                            var newReminder = RmbReminder()
+                            newReminder.title = story.title
+                            newReminder.calendar = targetCalendar
+                            newReminder.notes = rebuiltNotes
+                            let rid = await MainActor.run { () -> String? in
+                                guard !dryRun, let saved = RemindersService.shared.createNew(with: newReminder, in: targetCalendar) else { return nil }
+                                if let linkURL {
+                                    saved.url = linkURL
+                                    RemindersService.shared.save(reminder: saved)
+                                }
+                                return saved.calendarItemIdentifier
+                            }
+                            _ = rid
+                            created += 1
+                            SyncLogService.shared.logSyncDetail(direction: .toReminders, action: "createTasklessStoryReminder", taskId: nil, storyId: story.id, metadata: [
+                                "storyRef": story.storyRef,
+                                "title": story.title,
+                                "calendar": targetCalendar.title,
+                                "type": SyncedItemType.story.rawValue,
+                                "tags": noteTags
+                            ], dryRun: dryRun)
+                        }
+                    }
+
+                    for (storyRef, reminder) in storyRemindersByRef where storiesWithTasks.contains(storyRef) || !eligibleStoryRefs.contains(storyRef) {
+                        let changed = await MainActor.run { () -> Bool in
+                            guard !dryRun else { return false }
+                            guard !reminder.isCompleted else { return false }
+                            reminder.isCompleted = true
+                            RemindersService.shared.save(reminder: reminder)
+                            return true
+                        }
+                        if changed { updated += 1 }
+                        SyncLogService.shared.logSyncDetail(direction: .toReminders, action: "completeTasklessStoryReminder", taskId: nil, storyId: nil, metadata: [
+                            "storyRef": storyRef,
+                            "reason": storiesWithTasks.contains(storyRef) ? "story_has_tasks" : "story_not_eligible",
+                            "type": SyncedItemType.story.rawValue
+                        ], dryRun: dryRun)
+                    }
+                } catch {
+                    SyncLogService.shared.logEvent(
+                        tag: "sync",
+                        level: "WARN",
+                        message: "Taskless story sync skipped: \(error.localizedDescription)"
+                    )
+                }
+            }
+
             // Tasks with reminderId whose reminder no longer exists → clear mapping
             let reminderIdsSet = Set(all.map { $0.calendarItemIdentifier })
             let orphanTasks = tasks.filter { if let rid = $0.reminderId { return !reminderIdsSet.contains(rid) } else { return false } }
@@ -3404,7 +3568,7 @@ actor FirebaseSyncService {
                 if !dryRun {
                     batch.setData(["updatedAt": FieldValue.serverTimestamp(), "reminderId": FieldValue.delete(), "reminderMissingAt": FieldValue.serverTimestamp()], forDocument: ref, merge: true)
                 }
-                let context = await fetchStoryContext(storyId: orphanTask.storyId, goalId: orphanTask.goalId)
+                let context = contextFromTask(orphanTask)
                 var orphanMeta: [String: Any] = ["reason": "reminder missing"]
                 let orphanTaskRef = (orphanTask.reference?.isEmpty == false) ? orphanTask.reference! : orphanTask.id
                 orphanMeta["taskRef"] = orphanTaskRef
@@ -3417,7 +3581,7 @@ actor FirebaseSyncService {
             // Best-effort delete: if the task indicates deletion or conversion, complete the reminder and tag
             for task in tasks {
                 guard let rid = task.reminderId, let reminder = remindersById[rid] else { continue }
-                let context = await fetchStoryContext(storyId: task.storyId, goalId: task.goalId)
+                let context = contextFromTask(task)
                 let deleted =
                     (task.status as? String)?.lowercased() == "deleted" ||
                     (task.status as? NSNumber)?.intValue == -1 ||
@@ -3698,7 +3862,7 @@ actor FirebaseSyncService {
             errors: errors
         )
 
-        // Post-sync duplicate cleanup: always run local sweep; also call server dedupe every sync
+        // Post-sync duplicate cleanup: always run local sweep; keep server callable dedupe off delta-sync hot path
         if !dryRun {
             let cleanup = await fullSweepAndRemoveDuplicates(hardDelete: true)
             SyncLogService.shared.logEvent(
@@ -3706,9 +3870,10 @@ actor FirebaseSyncService {
                 level: cleanup.error == nil ? "INFO" : "ERROR",
                 message: "Post-sync full sweep: deleted=\(cleanup.deleted) groups=\(cleanup.groups) error=\(cleanup.error ?? "none")"
             )
-            // Always invoke server-side dedupe with title matching
-            await runServerDedupe(hardDelete: true, includeTitleDedupe: true)
-            await runServerCleanupDuplicates(forceImmediate: true)
+            if mode == .full {
+                await runServerDedupe(hardDelete: true, includeTitleDedupe: true)
+                await runServerCleanupDuplicates(forceImmediate: true)
+            }
         }
 
         let totalElapsedMs = Int(Date().timeIntervalSince(syncStart) * 1000)
