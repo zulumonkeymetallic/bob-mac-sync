@@ -43,6 +43,10 @@ struct FbTask {
     let dueDateLocked: Bool?
     let lockDueDate: Bool?
     let dueDateLockSource: String?
+    let dueDateLockedAt: Date?
+    let dueDateUpdatedSource: String?
+    let dueDateUpdatedBy: String?
+    let dueDateUpdatedAt: Date?
 }
 
 struct FbStory {
@@ -451,10 +455,42 @@ actor FirebaseSyncService {
             return false
         }
 
+        func captureLooseMetadataLine(_ line: String, into meta: inout [String: String]) -> Bool {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.hasPrefix("#") else { return false }
+
+            let mappings: [(prefix: String, key: String)] = [
+                ("#sprint: ", "sprint"),
+                ("#theme: ", "theme"),
+                ("#story: ", "storyRef"),
+                ("#task: ", "taskRef"),
+                ("#goal: ", "goalRef"),
+                ("#type: ", "type"),
+                ("#tags: ", "tags"),
+                ("#listId: ", "listId"),
+                ("#list: ", "list")
+            ]
+
+            for mapping in mappings {
+                guard trimmed.hasPrefix(mapping.prefix) else { continue }
+                let value = String(trimmed.dropFirst(mapping.prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty {
+                    meta[mapping.key] = value
+                }
+                return true
+            }
+            return false
+        }
+
         guard let metadataStart = lines.lastIndex(where: { $0.hasPrefix("BOB:") }) else {
-            var userLines = lines
-            userLines.removeAll(where: isBobLinkLine)
-            return (linkMeta, userLines)
+            var looseMeta = linkMeta
+            var userLines: [String] = []
+            for line in lines {
+                if isBobLinkLine(line) { continue }
+                if captureLooseMetadataLine(line, into: &looseMeta) { continue }
+                userLines.append(line)
+            }
+            return (looseMeta, userLines)
         }
 
         var metadataEnd = metadataStart
@@ -485,7 +521,14 @@ actor FirebaseSyncService {
             userLines.append(contentsOf: lines[scanIndex...])
         }
 
-        userLines.removeAll(where: isBobLinkLine)
+        var looseMeta = linkMeta
+        var filteredUserLines: [String] = []
+        for line in userLines {
+            if isBobLinkLine(line) { continue }
+            if captureLooseMetadataLine(line, into: &looseMeta) { continue }
+            filteredUserLines.append(line)
+        }
+        userLines = filteredUserLines
 
         let metadataLines = Array(lines[metadataStart...metadataEnd])
         guard let header = metadataLines.first, header.hasPrefix("BOB:") else {
@@ -532,7 +575,7 @@ actor FirebaseSyncService {
             }
         }
 
-        for (key, value) in linkMeta where meta[key] == nil {
+        for (key, value) in looseMeta where meta[key] == nil {
             meta[key] = value
         }
 
@@ -620,18 +663,63 @@ actor FirebaseSyncService {
             if !lines.isEmpty {
                 ensureBlankLineBeforeGeneratedContent()
             }
-            let appendedTask = appendTaskLink()
-            if !appendedTask {
-                if let story = meta["storyRef"], !story.isEmpty {
-                    lines.append("https://bob.jc1.tech/stories/\(story)")
-                } else if let goal = meta["goalRef"], !goal.isEmpty {
-                    lines.append("https://bob.jc1.tech/goals/\(goal)")
-                } else if let sprintId = meta["sprintId"], !sprintId.isEmpty {
-                    lines.append("https://bob.jc1.tech/sprints/\(sprintId)")
-                }
+            _ = appendTaskLink()
+            if let story = meta["storyRef"], !story.isEmpty {
+                lines.append("https://bob.jc1.tech/stories/\(story)")
+            }
+            if let goal = meta["goalRef"], !goal.isEmpty {
+                lines.append("https://bob.jc1.tech/goals/\(goal)")
+            }
+            if let sprintId = meta["sprintId"], !sprintId.isEmpty {
+                lines.append("https://bob.jc1.tech/sprints/\(sprintId)")
+            }
+            if let tags = meta["tags"], !tags.isEmpty {
+                lines.append("#tags: \(tags)")
             }
             return lines.joined(separator: "\n")
         }
+    }
+
+    private func mostRecentBobUpdate(for task: FbTask) -> Date {
+        max(
+            task.updatedAt ?? Date.distantPast,
+            max(task.serverUpdatedAt ?? Date.distantPast, task.dueDateUpdatedAt ?? Date.distantPast)
+        )
+    }
+
+    private func dueDateHasExplicitTime(_ dueMillis: Double) -> Bool {
+        let date = Date(timeIntervalSince1970: dueMillis / 1_000.0)
+        let components = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        return (components.hour ?? 0) != 0 || (components.minute ?? 0) != 0 || (components.second ?? 0) != 0
+    }
+
+    private func reminderOwnsDueDateLock(task: FbTask, bobUpdatedAt: Date) -> Bool {
+        guard task.dueDateLockSource == "mac_sync",
+              task.dueDateLocked == true || task.lockDueDate == true else {
+            return false
+        }
+
+        let updateSource = task.dueDateUpdatedSource?.lowercased()
+        if let updateSource, !updateSource.isEmpty {
+            if updateSource.hasPrefix("reminders_user_") {
+                return true
+            }
+            return false
+        }
+
+        if let dueDateUpdatedAt = task.dueDateUpdatedAt {
+            if bobUpdatedAt > dueDateUpdatedAt {
+                return false
+            }
+            return true
+        }
+
+        if let lockedAt = task.dueDateLockedAt {
+            return bobUpdatedAt <= lockedAt
+        }
+
+        // Legacy lock docs (without source) remain reminder-owned by default.
+        return true
     }
 
     nonisolated private func taskDeepLink(for taskRef: String) -> URL? {
@@ -1181,6 +1269,99 @@ actor FirebaseSyncService {
         return normalizedText
     }
 
+    private struct OllamaGenerateResponse: Decodable {
+        let response: String?
+    }
+
+    private struct SemanticDedupeDecision: Decodable {
+        let shouldMerge: Bool?
+        let candidateId: String?
+        let confidence: Double?
+    }
+
+    private func oldestTaskFirst(_ lhs: FbTask, _ rhs: FbTask) -> Bool {
+        let lhsKey = lhs.createdAt ?? lhs.updatedAt ?? Date.distantFuture
+        let rhsKey = rhs.createdAt ?? rhs.updatedAt ?? Date.distantFuture
+        if lhsKey != rhsKey { return lhsKey < rhsKey }
+        return lhs.id < rhs.id
+    }
+
+    private func resolveAmbiguousTitleDuplicateWithOllama(
+        reminderTitle: String,
+        reminderNotes: String?,
+        candidates: [FbTask]
+    ) async -> FbTask? {
+        let deterministicFallback = candidates.sorted(by: oldestTaskFirst).first
+        guard candidates.count > 1 else { return deterministicFallback }
+
+        let settings = await MainActor.run {
+            (
+                enabled: UserPreferences.shared.enableSemanticLocalDedupe,
+                endpoint: UserPreferences.shared.semanticLocalDedupeOllamaEndpoint?.trimmingCharacters(in: .whitespacesAndNewlines),
+                model: UserPreferences.shared.semanticLocalDedupeOllamaModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        guard settings.enabled else { return deterministicFallback }
+        guard let rawEndpoint = settings.endpoint, !rawEndpoint.isEmpty else { return deterministicFallback }
+        let endpointString: String = rawEndpoint.hasSuffix("/api/generate")
+            ? rawEndpoint
+            : rawEndpoint.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/api/generate"
+        guard let endpointURL = URL(string: endpointString) else { return deterministicFallback }
+        let modelName = settings.model.isEmpty ? "llama3.1:8b" : settings.model
+
+        let candidateLines = candidates.map { candidate in
+            let refValue = (candidate.reference?.isEmpty == false) ? candidate.reference! : candidate.id
+            return "- id=\(candidate.id) ref=\(refValue) title=\(candidate.title)"
+        }.joined(separator: "\n")
+        let prompt = """
+        Decide if the reminder is a duplicate of one of the existing Bob tasks.
+        Output strict JSON only with keys: shouldMerge (bool), candidateId (string), confidence (0-1).
+        If unsure, set shouldMerge=false.
+
+        Reminder:
+        title: \(reminderTitle)
+        notes: \(reminderNotes ?? "")
+
+        Existing candidates:
+        \(candidateLines)
+        """
+
+        var request = URLRequest(url: endpointURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 7.0
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "model": modelName,
+            "prompt": prompt,
+            "stream": false,
+            "format": "json",
+        ])
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                return deterministicFallback
+            }
+            let outer = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
+            guard let raw = outer.response, !raw.isEmpty else { return deterministicFallback }
+            guard let decisionData = raw.data(using: .utf8) else { return deterministicFallback }
+            let decision = try JSONDecoder().decode(SemanticDedupeDecision.self, from: decisionData)
+            guard decision.shouldMerge == true else { return deterministicFallback }
+            guard (decision.confidence ?? 0) >= 0.55 else { return deterministicFallback }
+            guard let candidateId = decision.candidateId else { return deterministicFallback }
+            if let resolved = candidates.first(where: { $0.id == candidateId }) {
+                return resolved
+            }
+        } catch {
+            SyncLogService.shared.logEvent(
+                tag: "dedupe",
+                level: "WARN",
+                message: "Ollama semantic dedupe fallback to deterministic matching: \(error.localizedDescription)"
+            )
+        }
+        return deterministicFallback
+    }
+
     private func awaitServerRef(for document: DocumentReference, ownerUid: String, timeout: TimeInterval = 5.0) async -> String? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -1414,7 +1595,11 @@ actor FirebaseSyncService {
             itemType: inferredType,
             dueDateLocked: nil,
             lockDueDate: nil,
-            dueDateLockSource: nil
+            dueDateLockSource: nil,
+            dueDateLockedAt: nil,
+            dueDateUpdatedSource: nil,
+            dueDateUpdatedBy: nil,
+            dueDateUpdatedAt: nil
         )
     }
 
@@ -1473,6 +1658,20 @@ actor FirebaseSyncService {
         } else {
             dueDate = nil
         }
+        let dueDateLockedAt: Date? = {
+            if let ts = data["dueDateLockedAt"] as? Timestamp { return ts.dateValue() }
+            if let dateValue = data["dueDateLockedAt"] as? Date { return dateValue }
+            if let numberValue = data["dueDateLockedAt"] as? NSNumber { return Date(timeIntervalSince1970: numberValue.doubleValue / 1_000.0) }
+            if let stringValue = data["dueDateLockedAt"] as? String, let parsedDate = isoFormatter.date(from: stringValue) { return parsedDate }
+            return nil
+        }()
+        let dueDateUpdatedAt: Date? = {
+            if let ts = data["dueDateUpdatedAt"] as? Timestamp { return ts.dateValue() }
+            if let dateValue = data["dueDateUpdatedAt"] as? Date { return dateValue }
+            if let numberValue = data["dueDateUpdatedAt"] as? NSNumber { return Date(timeIntervalSince1970: numberValue.doubleValue / 1_000.0) }
+            if let stringValue = data["dueDateUpdatedAt"] as? String, let parsedDate = isoFormatter.date(from: stringValue) { return parsedDate }
+            return nil
+        }()
 
         let reminderListId = (data["reminderListId"] as? String)
             ?? (data["remindersListId"] as? String)
@@ -1533,7 +1732,11 @@ actor FirebaseSyncService {
             itemType: normalizedItemType(data["type"] as? String),
             dueDateLocked: data["dueDateLocked"] as? Bool,
             lockDueDate: data["lockDueDate"] as? Bool,
-            dueDateLockSource: data["dueDateLockSource"] as? String
+            dueDateLockSource: data["dueDateLockSource"] as? String,
+            dueDateLockedAt: dueDateLockedAt,
+            dueDateUpdatedSource: data["dueDateUpdatedSource"] as? String,
+            dueDateUpdatedBy: data["dueDateUpdatedBy"] as? String,
+            dueDateUpdatedAt: dueDateUpdatedAt
         )
     }
 
@@ -1701,6 +1904,7 @@ actor FirebaseSyncService {
             var taskByReminderIdLatest: [String: FbTask] = [:]
             var taskByReferenceLatest: [String: FbTask] = [:]
             var taskByNormalizedTitleOldest: [String: FbTask] = [:]
+            var taskByNormalizedTitleAll: [String: [FbTask]] = [:]
             for task in tasks {
                 guard let rid = task.reminderId, !rid.isEmpty else { continue }
                 if let existing = taskByReminderIdLatest[rid] {
@@ -1728,6 +1932,7 @@ actor FirebaseSyncService {
                 // Build a hardened normalized-title index (parity with server)
                 let norm = normalizeTitleLocal(task.title)
                 if !norm.isEmpty {
+                    taskByNormalizedTitleAll[norm, default: []].append(task)
                     if let existing = taskByNormalizedTitleOldest[norm] {
                         // Prefer the oldest using createdAt when available, else updatedAt
                         let existingKey = existing.createdAt ?? existing.updatedAt ?? Date.distantFuture
@@ -1934,7 +2139,11 @@ actor FirebaseSyncService {
                             itemType: normalizedItemType(parsed.meta["type"]),
                             dueDateLocked: nil,
                             lockDueDate: nil,
-                            dueDateLockSource: nil
+                            dueDateLockSource: nil,
+                            dueDateLockedAt: nil,
+                            dueDateUpdatedSource: nil,
+                            dueDateUpdatedBy: nil,
+                            dueDateUpdatedAt: nil
                         )
                         repairs += 1
                         await restoreReminderMetadata(
@@ -2385,7 +2594,13 @@ actor FirebaseSyncService {
                     // same normalized title exists anywhere, link to it rather than
                     // importing. This enforces global uniqueness by title at import time.
                     let normTitle = normalizeTitleLocal(await MainActor.run { reminder.title ?? "" })
-                    if let candidate = taskByNormalizedTitleOldest[normTitle], !isDone(candidate.status) {
+                    let titleCandidates = (taskByNormalizedTitleAll[normTitle] ?? []).filter { !isDone($0.status) }
+                    let semanticCandidate = await resolveAmbiguousTitleDuplicateWithOllama(
+                        reminderTitle: await MainActor.run { reminder.title ?? "" },
+                        reminderNotes: await MainActor.run { reminder.notes },
+                        candidates: titleCandidates
+                    )
+                    if let candidate = semanticCandidate ?? taskByNormalizedTitleOldest[normTitle], !isDone(candidate.status) {
                         let calId = await MainActor.run { reminder.calendar.calendarIdentifier }
                         let calName = await MainActor.run { reminder.calendar.title }
                         var data: [String: Any] = [
@@ -2699,7 +2914,11 @@ actor FirebaseSyncService {
 
                 var rmb = RmbReminder()
                 rmb.title = task.title
-                if let due = task.dueDate { rmb.hasDueDate = true; rmb.hasTime = false; rmb.date = Date(timeIntervalSince1970: due / 1_000.0) }
+                if let due = task.dueDate {
+                    rmb.hasDueDate = true
+                    rmb.hasTime = dueDateHasExplicitTime(due)
+                    rmb.date = Date(timeIntervalSince1970: due / 1_000.0)
+                }
                 rmb.calendar = cal
 
                 var noteMeta: [String: String] = [
@@ -2799,7 +3018,11 @@ actor FirebaseSyncService {
                         itemType: task.itemType,
                         dueDateLocked: task.dueDateLocked,
                         lockDueDate: task.lockDueDate,
-                        dueDateLockSource: task.dueDateLockSource
+                        dueDateLockSource: task.dueDateLockSource,
+                        dueDateLockedAt: task.dueDateLockedAt,
+                        dueDateUpdatedSource: task.dueDateUpdatedSource,
+                        dueDateUpdatedBy: task.dueDateUpdatedBy,
+                        dueDateUpdatedAt: task.dueDateUpdatedAt
                     )
                 }
             }
@@ -2978,7 +3201,7 @@ actor FirebaseSyncService {
                 let reminderLastModified = await MainActor.run { reminder.lastModifiedDate ?? Date.distantPast }
                 let metaSynced = parseISO(meta["synced"]) ?? Date.distantPast
                 let reminderEffectiveUpdated = max(reminderLastModified, metaSynced)
-                let bobUpdated = task.updatedAt ?? Date.distantPast
+                let bobUpdated = mostRecentBobUpdate(for: task)
                 let nowIso = isoNow()
                 let includeMetadataInNotes = await shouldIncludeBobMetadataInNotes()
 
@@ -3178,16 +3401,18 @@ actor FirebaseSyncService {
 
                     // When mac_sync set the lock, Reminders holds the authoritative due date —
                     // do not overwrite it back from Firestore even though Bob is "newer".
-                    let macSyncHoldsDueDateLock = task.dueDateLockSource == "mac_sync"
-                        && (task.dueDateLocked == true || task.lockDueDate == true)
+                    let macSyncHoldsDueDateLock = reminderOwnsDueDateLock(task: task, bobUpdatedAt: bobUpdated)
                     if macSyncHoldsDueDateLock {
                         // Keep reminder's own due date; only update meta from Firestore
                         if let due = task.dueDate { meta["due"] = isoString(forMillis: due) }
                     } else if let due = task.dueDate {
                         let date = Date(timeIntervalSince1970: due / 1_000.0)
+                        let hasExplicitTime = dueDateHasExplicitTime(due)
                         if reminderDueDate != date {
                             if !dryRun {
-                                await MainActor.run { reminder.dueDateComponents = date.dateComponents(withTime: false) }
+                                await MainActor.run {
+                                    reminder.dueDateComponents = date.dateComponents(withTime: hasExplicitTime)
+                                }
                             }
                             reminderChanged = true
                         }
@@ -3870,9 +4095,16 @@ actor FirebaseSyncService {
                 level: cleanup.error == nil ? "INFO" : "ERROR",
                 message: "Post-sync full sweep: deleted=\(cleanup.deleted) groups=\(cleanup.groups) error=\(cleanup.error ?? "none")"
             )
-            if mode == .full {
+            let enableServerFallback = await MainActor.run { UserPreferences.shared.enableServerDedupeFallback }
+            if mode == .full && enableServerFallback {
                 await runServerDedupe(hardDelete: true, includeTitleDedupe: true)
                 await runServerCleanupDuplicates(forceImmediate: true)
+            } else if mode == .full {
+                SyncLogService.shared.logEvent(
+                    tag: "dedupe",
+                    level: "INFO",
+                    message: "Server dedupe fallback disabled; local dedupe only for this full sync"
+                )
             }
         }
 

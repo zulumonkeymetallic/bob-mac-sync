@@ -27,6 +27,11 @@ private enum PreferencesKeys {
     // Sync behavior
     static let syncDryRun = "syncDryRun"
     static let showBobMetadataInNotes = "showBobMetadataInNotes"
+    static let syncTasklessStories = "syncTasklessStories"
+    static let enableSemanticLocalDedupe = "enableSemanticLocalDedupe"
+    static let semanticLocalDedupeOllamaEndpoint = "semanticLocalDedupeOllamaEndpoint"
+    static let semanticLocalDedupeOllamaModel = "semanticLocalDedupeOllamaModel"
+    static let enableServerDedupeFallback = "enableServerDedupeFallback"
     static let syncInstanceId = "syncInstanceId"
     // Theme→Calendar mapping (theme name -> calendar identifier)
     static let themeCalendarMap = "themeCalendarMap"
@@ -241,6 +246,9 @@ class UserPreferences: ObservableObject {
 
     // MARK: - Authentication / Session
     @Published var staySignedIn: Bool = {
+        if defaults.object(forKey: PreferencesKeys.staySignedIn) == nil {
+            return true
+        }
         return defaults.bool(forKey: PreferencesKeys.staySignedIn)
     }() {
         didSet {
@@ -329,6 +337,48 @@ class UserPreferences: ObservableObject {
     }() {
         didSet {
             UserPreferences.defaults.set(showBobMetadataInNotes, forKey: PreferencesKeys.showBobMetadataInNotes)
+        }
+    }
+
+    @Published var syncTasklessStories: Bool = {
+        return defaults.bool(forKey: PreferencesKeys.syncTasklessStories)
+    }() {
+        didSet {
+            UserPreferences.defaults.set(syncTasklessStories, forKey: PreferencesKeys.syncTasklessStories)
+        }
+    }
+
+    @Published var enableSemanticLocalDedupe: Bool = {
+        return defaults.bool(forKey: PreferencesKeys.enableSemanticLocalDedupe)
+    }() {
+        didSet {
+            UserPreferences.defaults.set(enableSemanticLocalDedupe, forKey: PreferencesKeys.enableSemanticLocalDedupe)
+        }
+    }
+
+    @Published var semanticLocalDedupeOllamaEndpoint: String? = {
+        return defaults.string(forKey: PreferencesKeys.semanticLocalDedupeOllamaEndpoint)
+    }() {
+        didSet {
+            UserPreferences.defaults.set(semanticLocalDedupeOllamaEndpoint, forKey: PreferencesKeys.semanticLocalDedupeOllamaEndpoint)
+        }
+    }
+
+    @Published var semanticLocalDedupeOllamaModel: String = {
+        let saved = defaults.string(forKey: PreferencesKeys.semanticLocalDedupeOllamaModel) ?? ""
+        let trimmed = saved.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "llama3.1:8b" : trimmed
+    }() {
+        didSet {
+            UserPreferences.defaults.set(semanticLocalDedupeOllamaModel, forKey: PreferencesKeys.semanticLocalDedupeOllamaModel)
+        }
+    }
+
+    @Published var enableServerDedupeFallback: Bool = {
+        return defaults.bool(forKey: PreferencesKeys.enableServerDedupeFallback)
+    }() {
+        didSet {
+            UserPreferences.defaults.set(enableServerDedupeFallback, forKey: PreferencesKeys.enableServerDedupeFallback)
         }
     }
 

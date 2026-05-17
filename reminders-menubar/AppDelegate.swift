@@ -50,6 +50,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         configureKeyboardShortcut()
         configureDidCloseNotification()
         ensureRemindersAccessOnLaunch()
+        FirebaseManager.shared.configureIfNeeded()
+        Task { await FirebaseManager.shared.restoreGoogleSessionIfNeeded() }
     }
 
 #if canImport(GoogleSignIn)

@@ -177,6 +177,43 @@ class FirebaseManager: ObservableObject {
 
     #if canImport(GoogleSignIn)
     @MainActor
+    func restoreGoogleSessionIfNeeded() async {
+        configureIfNeeded()
+        let shouldRestore = await MainActor.run { UserPreferences.shared.staySignedIn }
+        guard shouldRestore else {
+            logAuthEvent(level: "DEBUG", "Skipping Google session restore because Stay Signed In is disabled")
+            return
+        }
+        guard GIDSignIn.sharedInstance.hasPreviousSignIn() else {
+            logAuthEvent(level: "DEBUG", "No previous Google session found to restore")
+            return
+        }
+
+        do {
+            let googleUser = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
+            let tokenDetails = "\(tokenSummary(googleUser.accessToken, label: "access")) \(tokenSummary(googleUser.idToken, label: "id"))"
+            logAuthEvent(
+                level: "INFO",
+                "Restored previous Google session userId=\(googleUser.userID ?? "nil") email=\(googleUser.profile?.email ?? "unknown") \(tokenDetails)"
+            )
+
+            guard let idToken = googleUser.idToken?.tokenString else {
+                logAuthEvent(level: "WARN", "Restored Google session missing ID token; leaving Firebase auth unchanged")
+                return
+            }
+
+            let credential = GoogleAuthProvider.credential(
+                withIDToken: idToken,
+                accessToken: googleUser.accessToken.tokenString
+            )
+            let result = try await Auth.auth().signIn(with: credential)
+            logAuthEvent(level: "INFO", "Firebase session refreshed from restored Google sign-in uid=\(result.user.uid)")
+        } catch {
+            logAuthFailure(error, context: "Restore previous Google sign-in")
+        }
+    }
+
+    @MainActor
     func signInWithGoogle(presenting window: NSWindow) async throws {
         logAuthEvent(
             level: "INFO",
@@ -269,6 +306,8 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
+    @MainActor
+    func restoreGoogleSessionIfNeeded() async { }
     func googleSignOut() { }
     #endif
 }
@@ -317,6 +356,9 @@ class FirebaseManager: ObservableObject {
         )
         throw err
     }
+
+    @MainActor
+    func restoreGoogleSessionIfNeeded() async { }
 
     @MainActor
     func googleSignOut() { }

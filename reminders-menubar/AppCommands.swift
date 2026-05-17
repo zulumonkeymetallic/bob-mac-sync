@@ -26,6 +26,10 @@ struct AppCommands: Commands {
                 Text("Show Bob Metadata in Notes")
             }
 
+            Toggle(isOn: $prefs.syncTasklessStories) {
+                Text("Sync Stories Without Tasks")
+            }
+
             // Delete all duplicates action
             Button("Delete All Duplicates…") {
                 Task {
