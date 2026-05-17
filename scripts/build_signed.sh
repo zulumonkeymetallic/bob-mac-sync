@@ -102,14 +102,14 @@ DESTINATION="${DESTINATION:-platform=macOS,arch=arm64}"
 TIMESTAMP="${TIMESTAMP:-$(date '+%d_%m_%y_%H_%M')}"
 TEAM_ID="${TEAM_ID:-${PROJECT_TEAM_ID:-}}"
 ALLOW_PROVISIONING_UPDATES="${ALLOW_PROVISIONING_UPDATES:-1}"
-SIGNING_MODE="${SIGNING_MODE:-development}"
+SIGNING_MODE="${SIGNING_MODE:-developer-id}"
 STAGE_ROOT="${STAGE_ROOT:-${DEFAULT_STAGE_ROOT}}"
 EXPORT_ROOT="${EXPORT_ROOT:-${DEFAULT_EXPORT_ROOT}}"
 STAGE_DIR="${STAGE_DIR:-${STAGE_ROOT}/${TIMESTAMP}}"
 DERIVED_DATA="${DERIVED_DATA:-${STAGE_DIR}/DerivedData}"
 EXPORT_DIR="${EXPORT_DIR:-${EXPORT_ROOT}/${TIMESTAMP}}"
 LAUNCH_APP="${LAUNCH_APP:-1}"
-NOTARIZE_APP="${NOTARIZE_APP:-0}"
+NOTARIZE_APP="${NOTARIZE_APP:-1}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-bobmacsync-notary}"
 NOTARY_KEY_PATH="${NOTARY_KEY_PATH:-/Users/jim/Downloads/AppConnect Key}"
@@ -212,21 +212,33 @@ echo "Verifying staged distribution app"
 codesign --verify --deep --strict --verbose=2 "${DIST_APP_PATH}"
 
 if [[ "${SIGNING_MODE}" == "developer-id" && "${NOTARIZE_APP}" == "1" ]]; then
-  if [[ -z "${NOTARY_KEY_ID}" || -z "${NOTARY_ISSUER_ID}" ]]; then
-    echo "NOTARY_KEY_ID and NOTARY_ISSUER_ID are required for notarization." >&2
-    exit 1
-  fi
-  if [[ ! -f "${NOTARY_KEY_PATH}" ]]; then
-    echo "Notary API key not found at: ${NOTARY_KEY_PATH}" >&2
-    exit 1
+  # If the keychain profile already exists (xcrun notarytool history succeeds),
+  # skip re-storing credentials — avoids requiring NOTARY_KEY_ID/ISSUER_ID on
+  # every run. Only store when the profile is absent or explicitly overridden.
+  profile_valid=0
+  if xcrun notarytool history --keychain-profile "${NOTARY_PROFILE}" >/dev/null 2>&1; then
+    profile_valid=1
+    echo "Notary keychain profile '${NOTARY_PROFILE}' already valid — skipping store-credentials"
   fi
 
-  echo "Storing notarytool credentials"
-  xcrun notarytool store-credentials "${NOTARY_PROFILE}" \
-    --key "${NOTARY_KEY_PATH}" \
-    --key-id "${NOTARY_KEY_ID}" \
-    --issuer "${NOTARY_ISSUER_ID}" \
-    --validate
+  if [[ "${profile_valid}" == "0" ]]; then
+    if [[ -z "${NOTARY_KEY_ID}" || -z "${NOTARY_ISSUER_ID}" ]]; then
+      echo "Notary keychain profile '${NOTARY_PROFILE}' not found." >&2
+      echo "Set NOTARY_KEY_ID and NOTARY_ISSUER_ID to store credentials, or run:" >&2
+      echo "  xcrun notarytool store-credentials ${NOTARY_PROFILE} --key <key.p8> --key-id <KEY_ID> --issuer <ISSUER_UUID>" >&2
+      exit 1
+    fi
+    if [[ ! -f "${NOTARY_KEY_PATH}" ]]; then
+      echo "Notary API key not found at: ${NOTARY_KEY_PATH}" >&2
+      exit 1
+    fi
+    echo "Storing notarytool credentials"
+    xcrun notarytool store-credentials "${NOTARY_PROFILE}" \
+      --key "${NOTARY_KEY_PATH}" \
+      --key-id "${NOTARY_KEY_ID}" \
+      --issuer "${NOTARY_ISSUER_ID}" \
+      --validate
+  fi
 
   echo "Preparing notarization archive"
   ditto -c -k --keepParent "${DIST_APP_PATH}" "${NOTARY_ZIP_PATH}"
