@@ -4211,16 +4211,17 @@ actor FirebaseSyncService {
         for region in regions {
             do {
                 let client = Functions.functions(region: region)
-                // runNightlyChainNow has a 540s server timeout; give the client 570s.
-                let fn = client.httpsCallable("runNightlyChainNow", timeout: 570)
+                // runNightlyChainNow has a 540s server timeout.
+                let fn = client.httpsCallable("runNightlyChainNow")
+                fn.timeoutInterval = 570
                 let res = try await fn.call([:] as [String: Any])
                 guard let dict = res.data as? [String: Any] else {
                     return NightlyOrchestrationResult(steps: [], error: "Unexpected response format")
                 }
                 var steps: [(String, String)] = []
                 if let rawResults = dict["results"] as? [[String: Any]] {
-                    steps = rawResults.compactMap { r in
-                        guard let name = r["step"] as? String, let status = r["status"] as? String else { return nil }
+                    steps = rawResults.compactMap { row in
+                        guard let name = row["step"] as? String, let status = row["status"] as? String else { return nil }
                         return (name, status)
                     }
                 }
