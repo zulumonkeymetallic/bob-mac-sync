@@ -4197,6 +4197,50 @@ actor FirebaseSyncService {
         #endif
     }
 
+    // MARK: - Nightly Orchestration
+
+    struct NightlyOrchestrationResult {
+        let steps: [(name: String, status: String)]
+        let error: String?
+    }
+
+    func runNightlyOrchestration() async -> NightlyOrchestrationResult {
+        #if canImport(FirebaseFunctions)
+        let regions = ["europe-west2", "us-central1", "europe-west1"]
+        var lastError: Error?
+        for region in regions {
+            do {
+                let client = Functions.functions(region: region)
+                // runNightlyChainNow has a 540s server timeout; give the client 570s.
+                let fn = client.httpsCallable("runNightlyChainNow", timeout: 570)
+                let res = try await fn.call([:] as [String: Any])
+                guard let dict = res.data as? [String: Any] else {
+                    return NightlyOrchestrationResult(steps: [], error: "Unexpected response format")
+                }
+                var steps: [(String, String)] = []
+                if let rawResults = dict["results"] as? [[String: Any]] {
+                    steps = rawResults.compactMap { r in
+                        guard let name = r["step"] as? String, let status = r["status"] as? String else { return nil }
+                        return (name, status)
+                    }
+                }
+                SyncLogService.shared.logEvent(tag: "orchestration", level: "INFO",
+                    message: "Nightly orchestration[\(region)] complete: \(steps.map { "\($0.0):\($0.1)" }.joined(separator: ", "))")
+                return NightlyOrchestrationResult(steps: steps, error: nil)
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        let msg = lastError?.localizedDescription ?? "All regions failed"
+        SyncLogService.shared.logEvent(tag: "orchestration", level: "ERROR", message: "Nightly orchestration failed: \(msg)")
+        return NightlyOrchestrationResult(steps: [], error: msg)
+        #else
+        SyncLogService.shared.logEvent(tag: "orchestration", level: "INFO", message: "FirebaseFunctions not available")
+        return NightlyOrchestrationResult(steps: [], error: "FirebaseFunctions not available")
+        #endif
+    }
+
     private func makeLocalTaskRef() -> String {
         let alphabet = Array("23456789ABCDEFGHJKMNPQRSTUVWXYZ")
         var body = ""

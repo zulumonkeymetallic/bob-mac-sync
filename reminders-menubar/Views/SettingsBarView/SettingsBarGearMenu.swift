@@ -6,7 +6,9 @@ struct SettingsBarGearMenu: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     
     @State var gearIsHovered = false
-    
+    @State private var isRunningOrchestration = false
+    @State private var orchestrationStatusMessage: String? = nil
+
     @ObservedObject var appUpdateCheckHelper = AppUpdateCheckHelper.shared
     @ObservedObject var keyboardShortcutService = KeyboardShortcutService.shared
     @ObservedObject var manualSyncService = ManualSyncService.shared
@@ -100,6 +102,38 @@ struct SettingsBarGearMenu: View {
 
                 Button("Sync with Bob") { ManualSyncService.shared.trigger(reason: "Settings Menu") }
                     .disabled(manualSyncService.isSyncing)
+
+                Button(action: {
+                    guard !isRunningOrchestration else { return }
+                    isRunningOrchestration = true
+                    orchestrationStatusMessage = nil
+                    Task {
+                        await SyncFeedbackService.shared.show(message: "Running nightly orchestration…")
+                        let result = await FirebaseSyncService.shared.runNightlyOrchestration()
+                        isRunningOrchestration = false
+                        if let err = result.error {
+                            orchestrationStatusMessage = "Orchestration failed"
+                            SyncLogService.shared.logEvent(tag: "orchestration", level: "ERROR", message: err)
+                            await SyncFeedbackService.shared.show(message: "Orchestration failed: \(err)")
+                        } else {
+                            let failed = result.steps.filter { $0.status != "ok" }
+                            let msg = failed.isEmpty
+                                ? "Orchestration complete (\(result.steps.count) steps)"
+                                : "Orchestration done — \(failed.count) step(s) had errors: \(failed.map(\.name).joined(separator: ", "))"
+                            orchestrationStatusMessage = msg
+                            await SyncFeedbackService.shared.show(message: msg)
+                            // Trigger a sync immediately after so updated due dates flow to Reminders
+                            ManualSyncService.shared.trigger(reason: "Post-orchestration sync")
+                        }
+                    }
+                }) {
+                    if isRunningOrchestration {
+                        Label("Orchestration Running…", systemImage: "clock.arrow.2.circlepath")
+                    } else {
+                        Label("Run Nightly Orchestration", systemImage: "wand.and.stars")
+                    }
+                }
+                .disabled(isRunningOrchestration || manualSyncService.isSyncing)
 
                 Button("Open Sync Log") {
                     SyncLogService.shared.revealLogInFinder()
