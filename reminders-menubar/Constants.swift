@@ -11,8 +11,8 @@ enum AppConstants {
     }()
     
     static let appName = "Reminders MenuBar"
-    static let mainBundleId = "com.jc1.tech.bob"
-    static let launcherBundleId = "com.jc1.tech"
+    static let mainBundleId = "com.jc1.tech.bob.mac"
+    static let launcherBundleId = "com.jc1.tech.bob.mac.launcher"
 
     // Toggle native macOS Reminders integration. When false the app avoids
     // hitting CalendarAgent (EventKit) and operates in Firebase-only mode.

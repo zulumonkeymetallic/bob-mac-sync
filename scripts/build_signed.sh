@@ -4,11 +4,11 @@ set -euo pipefail
 # Canonical local build script.
 # It builds in a local staging directory, re-signs the app for the selected
 # distribution mode, optionally notarizes, then exports the finished app into
-# iCloud Drive so the repo build directory is never used as the final artifact.
+# Google Drive (avoids iCloud file provider xattr injection that breaks codesign).
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_FILE="${ROOT_DIR}/reminders-menubar.xcodeproj/project.pbxproj"
-DEFAULT_EXPORT_ROOT="/Users/jim/Library/Mobile Documents/com~apple~CloudDocs/bobmacsync"
+DEFAULT_EXPORT_ROOT="/Users/jim/Library/CloudStorage/GoogleDrive-Jdonnelly@jc1.tech/My Drive/BobMacSync"
 DEFAULT_STAGE_ROOT="${HOME}/Library/Application Support/bobmacsync-builds"
 
 detect_project_team() {
@@ -28,6 +28,12 @@ sanitize_entitlements() {
 
   cp "${source_path}" "${dest_path}"
   /usr/libexec/PlistBuddy -c "Delete :com.apple.security.get-task-allow" "${dest_path}" >/dev/null 2>&1 || true
+  # Firebase ships pre-built binary gRPC/Abseil frameworks whose bundle format
+  # codesign treats as ambiguous. On macOS 26+ this causes hardened-runtime
+  # library validation to refuse loading them under Developer ID. Disabling
+  # library validation is the standard workaround for Firebase macOS apps.
+  /usr/libexec/PlistBuddy -c "Add :com.apple.security.cs.disable-library-validation bool true" "${dest_path}" >/dev/null 2>&1 || \
+  /usr/libexec/PlistBuddy -c "Set :com.apple.security.cs.disable-library-validation true" "${dest_path}" >/dev/null 2>&1 || true
 }
 
 wait_for_notarization() {
@@ -102,13 +108,13 @@ DESTINATION="${DESTINATION:-platform=macOS,arch=arm64}"
 TIMESTAMP="${TIMESTAMP:-$(date '+%d_%m_%y_%H_%M')}"
 TEAM_ID="${TEAM_ID:-${PROJECT_TEAM_ID:-}}"
 ALLOW_PROVISIONING_UPDATES="${ALLOW_PROVISIONING_UPDATES:-1}"
-SIGNING_MODE="${SIGNING_MODE:-developer-id}"
+SIGNING_MODE="${SIGNING_MODE:-development}"
 STAGE_ROOT="${STAGE_ROOT:-${DEFAULT_STAGE_ROOT}}"
 EXPORT_ROOT="${EXPORT_ROOT:-${DEFAULT_EXPORT_ROOT}}"
 STAGE_DIR="${STAGE_DIR:-${STAGE_ROOT}/${TIMESTAMP}}"
 DERIVED_DATA="${DERIVED_DATA:-${STAGE_DIR}/DerivedData}"
 EXPORT_DIR="${EXPORT_DIR:-${EXPORT_ROOT}/${TIMESTAMP}}"
-LAUNCH_APP="${LAUNCH_APP:-1}"
+LAUNCH_APP="${LAUNCH_APP:-0}"
 NOTARIZE_APP="${NOTARIZE_APP:-1}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-bobmacsync-notary}"
@@ -199,8 +205,11 @@ case "${SIGNING_MODE}" in
       exit 1
     fi
     echo "Re-signing exported app with Developer ID Application"
-    codesign --force --sign "${DIST_IDENTITY}" --entitlements "${DIST_LOGIN_ITEM_XCENT}" --options runtime --timestamp "${DIST_LOGIN_ITEM_PATH}"
-    codesign --force --deep --sign "${DIST_IDENTITY}" --entitlements "${DIST_MAIN_XCENT}" --options runtime --timestamp "${DIST_APP_PATH}"
+    # --generate-entitlement-der is required on macOS 26+: the kernel enforces
+    # that sandboxed Developer ID apps embed a DER-encoded entitlements blob in
+    # their code signature; without it launchd refuses to spawn the process.
+    codesign --force --sign "${DIST_IDENTITY}" --entitlements "${DIST_LOGIN_ITEM_XCENT}" --options runtime --timestamp --generate-entitlement-der "${DIST_LOGIN_ITEM_PATH}"
+    codesign --force --deep --sign "${DIST_IDENTITY}" --entitlements "${DIST_MAIN_XCENT}" --options runtime --timestamp --generate-entitlement-der "${DIST_APP_PATH}"
     ;;
   *)
     echo "Unsupported SIGNING_MODE: ${SIGNING_MODE}" >&2
@@ -270,12 +279,11 @@ if [[ -n "${DUPLICATE_EXPORT}" ]]; then
   echo "Skipping export. Set TIMESTAMP manually to force a new export directory."
   EXPORT_APP_PATH="${DUPLICATE_EXPORT}/Reminders MenuBar.app"
 else
-  echo "Exporting final app to iCloud Drive"
+  echo "Exporting final app to Google Drive"
   ditto "${DIST_APP_PATH}" "${EXPORT_APP_PATH}"
 fi
 
-# iCloud Drive can attach FinderInfo xattrs after copy; strip them to keep the
-# signature verifiable and ensure clean launch on both Macs.
+# Strip any xattrs that accumulate during copy (belt-and-suspenders).
 find "${EXPORT_APP_PATH}" -exec xattr -c {} ';' 2>/dev/null || true
 
 echo "Verifying exported app"
@@ -288,3 +296,8 @@ if [[ "${LAUNCH_APP}" == "1" ]]; then
   echo "Launching ${EXPORT_APP_PATH}"
   open "${EXPORT_APP_PATH}"
 fi
+
+# Keep DerivedData only for the current build — older ones accumulate quickly.
+ls -dt "${STAGE_ROOT}"/*/  2>/dev/null | tail -n +2 | while read old_dir; do
+  [[ -d "${old_dir}DerivedData" ]] && rm -rf "${old_dir}DerivedData" && echo "Cleaned DerivedData: ${old_dir}"
+done || true
