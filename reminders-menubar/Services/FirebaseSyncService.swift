@@ -3205,8 +3205,12 @@ actor FirebaseSyncService {
                 let nowIso = isoNow()
                 let includeMetadataInNotes = await shouldIncludeBobMetadataInNotes()
 
-                let reminderIsNewer = reminderEffectiveUpdated > bobUpdated
-                let bobIsNewer = bobUpdated > reminderEffectiveUpdated
+                // Give Bob a 30-second winning margin. macOS/iOS sets lastModifiedDate on
+                // reminders in the background (iCloud sync, display) without user input,
+                // so a strict > comparison causes false reminderIsNewer results.
+                let timeDiff = bobUpdated.timeIntervalSince(reminderEffectiveUpdated)
+                let reminderIsNewer = timeDiff < -30
+                let bobIsNewer = timeDiff >= 0
 
                 let ref = db.collection("tasks").document(task.id)
 
@@ -3232,9 +3236,13 @@ actor FirebaseSyncService {
                     if let due = reminderDueDate {
                         let reminderDueMs = due.timeIntervalSince1970 * 1_000.0
                         pushData["dueDate"] = reminderDueMs
-                        // Lock the due date when the user has set a different date in Reminders
+                        // Only lock the due date when the sync has been active recently.
+                        // A stale meta["synced"] (e.g., after dry-run or a gap in sync) means
+                        // we cannot distinguish a genuine user edit from a Firestore propagation
+                        // delay — skip the lock in that case to avoid corrupting the canonical date.
                         let existingDueMs = task.dueDate ?? 0.0
-                        if abs(reminderDueMs - existingDueMs) > 1000 {
+                        let sevenDaysAgo = Date().addingTimeInterval(-7 * 86400)
+                        if abs(reminderDueMs - existingDueMs) > 1000 && metaSynced > sevenDaysAgo {
                             pushData["dueDateLocked"] = true
                             pushData["lockDueDate"] = true
                             pushData["dueDateReason"] = "user_reminder_sync"
@@ -3525,6 +3533,12 @@ actor FirebaseSyncService {
                             "tags": Array(tagSet)
                         ]
                         batch.setData(tagUpdate, forDocument: ref, merge: true)
+                        if reminderChanged {
+                            // Saving to Reminders resets lastModifiedDate to now, which would make
+                            // reminderEffectiveUpdated ≈ now on the next pass. Bump serverUpdatedAt
+                            // so bobUpdated stays >= reminderEffectiveUpdated and we don't oscillate.
+                            batch.setData(["serverUpdatedAt": FieldValue.serverTimestamp()], forDocument: ref, merge: true)
+                        }
                     }
                     // Add tag on Reminder when conversion detected
                     if task.convertedToStoryId != nil, shouldBeCompleted {
