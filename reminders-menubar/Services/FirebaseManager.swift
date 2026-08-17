@@ -54,11 +54,15 @@ class FirebaseManager: ObservableObject {
                 return first
             }
         }
-        let bundleId = Bundle.main.bundleIdentifier ?? "?"
-        if let prefix = Bundle.main.infoDictionary?["AppIdentifierPrefix"] as? String {
+        // AppIdentifierPrefix is only present when a provisioning profile is embedded.
+        // Without it we cannot construct a valid team-prefixed group — returning nil
+        // causes configureIfNeeded to call useUserAccessGroup(nil) and use the
+        // default keychain scope, which works for non-sandboxed Developer ID builds.
+        if let prefix = Bundle.main.infoDictionary?["AppIdentifierPrefix"] as? String,
+           let bundleId = Bundle.main.bundleIdentifier {
             return "\(prefix)\(bundleId)"
         }
-        return bundleId
+        return nil
     }
 
     private func keychainAccessGroupHint() -> String {
@@ -113,9 +117,25 @@ class FirebaseManager: ObservableObject {
                 logAuthEvent(level: "INFO", "Using Firebase Auth keychain group \(accessGroup)")
             } catch {
                 logAuthFailure(error, context: "Set Firebase Auth keychain group")
+                // keychain-access-groups is unbacked without a provisioning profile
+                // (Developer ID build). Fall back to the default keychain scope.
+                do {
+                    try Auth.auth().useUserAccessGroup(nil)
+                    logAuthEvent(level: "INFO", "Fell back to default keychain scope after group failure")
+                } catch {
+                    logAuthFailure(error, context: "Set Firebase Auth nil keychain group (fallback)")
+                }
             }
         } else {
-            logAuthEvent(level: "WARN", "No keychain access group found; using default keychain scope")
+            // No provisioning profile present (non-sandboxed Developer ID build).
+            // Passing nil lets Firebase Auth use the default keychain scope without
+            // requiring the keychain-access-groups entitlement.
+            do {
+                try Auth.auth().useUserAccessGroup(nil)
+                logAuthEvent(level: "INFO", "No provisioning profile — using default keychain scope (nil access group)")
+            } catch {
+                logAuthFailure(error, context: "Set Firebase Auth nil keychain group")
+            }
         }
         // Enable verbose Firebase logging so we can diagnose SDK/transport
         FirebaseConfiguration.shared.setLoggerLevel(.debug)

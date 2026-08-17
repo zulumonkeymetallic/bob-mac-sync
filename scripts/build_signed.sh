@@ -28,6 +28,19 @@ sanitize_entitlements() {
 
   cp "${source_path}" "${dest_path}"
   /usr/libexec/PlistBuddy -c "Delete :com.apple.security.get-task-allow" "${dest_path}" >/dev/null 2>&1 || true
+  # macOS 26+ enforces that sandboxed Developer ID apps have a provisioning profile
+  # backing restricted entitlements (calendars, reminders). Without one, RunningBoard
+  # returns RBSRequestErrorRestricted and launchd refuses to spawn the process.
+  # The fix for Developer ID distribution is to remove the sandbox entirely — the app
+  # uses TCC for reminders/calendar access regardless, so behaviour is unchanged.
+  /usr/libexec/PlistBuddy -c "Delete :com.apple.security.app-sandbox" "${dest_path}" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Delete :com.apple.application-identifier" "${dest_path}" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Delete :com.apple.developer.team-identifier" "${dest_path}" >/dev/null 2>&1 || true
+  # keychain-access-groups requires a provisioning profile to back it. Developer ID
+  # builds ship without one, so the group is unenforceable and SecItem* returns
+  # errSecMissingEntitlement (-34018). Remove it here; FirebaseManager falls back to
+  # useUserAccessGroup(nil) which uses the default keychain — correct for non-sandboxed builds.
+  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "${dest_path}" >/dev/null 2>&1 || true
   # Firebase ships pre-built binary gRPC/Abseil frameworks whose bundle format
   # codesign treats as ambiguous. On macOS 26+ this causes hardened-runtime
   # library validation to refuse loading them under Developer ID. Disabling
@@ -108,7 +121,7 @@ DESTINATION="${DESTINATION:-platform=macOS,arch=arm64}"
 TIMESTAMP="${TIMESTAMP:-$(date '+%d_%m_%y_%H_%M')}"
 TEAM_ID="${TEAM_ID:-${PROJECT_TEAM_ID:-}}"
 ALLOW_PROVISIONING_UPDATES="${ALLOW_PROVISIONING_UPDATES:-1}"
-SIGNING_MODE="${SIGNING_MODE:-development}"
+SIGNING_MODE="${SIGNING_MODE:-developer-id}"
 STAGE_ROOT="${STAGE_ROOT:-${DEFAULT_STAGE_ROOT}}"
 EXPORT_ROOT="${EXPORT_ROOT:-${DEFAULT_EXPORT_ROOT}}"
 STAGE_DIR="${STAGE_DIR:-${STAGE_ROOT}/${TIMESTAMP}}"
@@ -204,12 +217,26 @@ case "${SIGNING_MODE}" in
       echo "Developer ID Application signing identity not found." >&2
       exit 1
     fi
-    echo "Re-signing exported app with Developer ID Application"
-    # --generate-entitlement-der is required on macOS 26+: the kernel enforces
-    # that sandboxed Developer ID apps embed a DER-encoded entitlements blob in
-    # their code signature; without it launchd refuses to spawn the process.
+    echo "Re-signing exported app with Developer ID Application (inside-out, depth-sorted)"
+    # --deep is deprecated and mis-signs symlinked framework versions, producing a
+    # bundle that passes codesign --verify but fails at kernel load time on macOS 26
+    # with the hardened runtime. Sign all nested components depth-first (longest path
+    # first) so bundles inside frameworks are sealed before their parent frameworks.
+
+    # 1. All inner components — sorted deepest path first
+    while IFS= read -r item; do
+      codesign --force --sign "${DIST_IDENTITY}" --options runtime --timestamp --generate-entitlement-der "${item}"
+    done < <(find "${DIST_APP_PATH}/Contents" \
+        \( -name "*.framework" -o -name "*.dylib" -o -name "*.bundle" -o -name "*.appex" \) \
+        -not -path "${DIST_LOGIN_ITEM_PATH}" \
+        -print 2>/dev/null \
+      | awk '{print length, $0}' | sort -rn | awk '{$1=""; sub(/^ /, ""); print}')
+
+    # 2. Login item launcher (before the outer app, after its inner components)
     codesign --force --sign "${DIST_IDENTITY}" --entitlements "${DIST_LOGIN_ITEM_XCENT}" --options runtime --timestamp --generate-entitlement-der "${DIST_LOGIN_ITEM_PATH}"
-    codesign --force --deep --sign "${DIST_IDENTITY}" --entitlements "${DIST_MAIN_XCENT}" --options runtime --timestamp --generate-entitlement-der "${DIST_APP_PATH}"
+
+    # 3. Outer app bundle — no --deep
+    codesign --force --sign "${DIST_IDENTITY}" --entitlements "${DIST_MAIN_XCENT}" --options runtime --timestamp --generate-entitlement-der "${DIST_APP_PATH}"
     ;;
   *)
     echo "Unsupported SIGNING_MODE: ${SIGNING_MODE}" >&2
